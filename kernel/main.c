@@ -24,13 +24,74 @@
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/process.h"
 #include "lib/malloc/kmalloc.h"
+#include "lib/png/png.h"
 #include "lib/rand/rand.h"
 #include "mm/pool.h"
 #include "net/net.h"
 #include "user/libc/stdio.h"
+#include "lib/string/str.h"
 #include "user/libc/syscall.h"
 
+extern const uint8_t _binary__root_LumenOS_logo_png_start[];
+extern const uint8_t _binary__root_LumenOS_logo_png_end[];
+
 #define VRAM_VIRT 0x80000000UL
+
+static void show_boot_logo(void) {
+    const struct BOOT_INFO *bi = boot_info();
+    const struct BOOT_FRAMEBUFFER *fb = &bi->framebuffer;
+    int fw = (int)fb->width;
+    int fh = (int)fb->height;
+
+    const uint8_t *logo_data = _binary__root_LumenOS_logo_png_start;
+    uint32_t logo_len = (uint32_t)(_binary__root_LumenOS_logo_png_end
+                                 - _binary__root_LumenOS_logo_png_start);
+
+    struct PNG_IMAGE logo_img;
+    memset(&logo_img, 0, sizeof(logo_img));
+    int ret = png_decode(logo_data, logo_len, &logo_img);
+    if (ret != PNG_OK || logo_img.pixels == NULL ||
+        logo_img.w <= 0 || logo_img.h <= 0) {
+        return;
+    }
+
+    int src_w = logo_img.w;
+    int src_h = logo_img.h;
+
+    int dw = src_w / 4;
+    int dh = src_h / 4;
+    if (dw < 1) dw = 1;
+    if (dh < 1) dh = 1;
+
+    int dest_x = (fw - dw) / 2;
+    int dest_y = (fh - dh) / 2;
+    if (dest_x < 0) dest_x = 0;
+    if (dest_y < 0) dest_y = 0;
+
+    struct GFX_CANVAS logo_canvas = {
+        .pixels = logo_img.pixels,
+        .pitch  = src_w * 4,
+        .w      = src_w,
+        .h      = src_h,
+        .bytes  = (size_t)src_w * (size_t)src_h * 4u,
+    };
+
+    uint32_t fb_bytes = (uint32_t)fb->pitch * (uint32_t)fh;
+    uintptr_t vram_virt =
+        (uintptr_t)VRAM_VIRT + ((uintptr_t)fb->addr & 0x1FFFFFUL);
+    struct GFX_CANVAS fb_canvas = {
+        .pixels = (uint32_t *)(void *)vram_virt,
+        .pitch  = fb->pitch,
+        .w      = fw,
+        .h      = fh,
+        .bytes  = fb_bytes,
+    };
+
+    gfx_blit_scale(&fb_canvas, dest_x, dest_y, dw, dh,
+                   &logo_canvas, 0, 0, src_w, src_h);
+
+    png_image_free(&logo_img);
+}
 
 void drivers_init(int min_level, int max_level) {
     struct DRIVER_OPS table[16];
@@ -84,7 +145,6 @@ void kmain(uint32_t magic, void *mbi_ptr, uint32_t kphys) {
     };
     gfx_set_fb_format(&fmt);
 
-    io_clear_screen();
     if (bi->cmdline != NULL) {
         for (const char *c = bi->cmdline; *c; c++) {
             if (c[0] == 'v' && c[1] == 'e' && c[2] == 'r' && c[3] == 'b' && c[4] == 'o' &&
@@ -107,45 +167,28 @@ void kmain(uint32_t magic, void *mbi_ptr, uint32_t kphys) {
     kheap_init();
     kheap_selftest();
 
-    kprintf_v("[init] gdt\n");
+    io_clear_screen();
+    show_boot_logo();
+
     gdt_init();
 
-    kprintf_v("[init] percpu\n");
     percpu_init();
     set_current((struct TASK *)0);
 
-    kprintf_v("[init] tss\n");
     tss_init();
-
-    kprintf_v("[init] idt\n");
     idt_init();
 
-    kprintf_v("[init] syscall\n");
     syscall_init();
     futex_init();
 
-    kprintf_v("[init] ppmode\n");
-    kprintf("[OK] long mode (CR0.PG=1 CR4.PAE=1 EFER.LME=1 CS.L=1)\n");
-
-    kprintf_v("[init] acpi\n");
     acpi_init();
-
-    kprintf_v("[init] apic\n");
     pit_init(PIT_HZ);
     if (apic_init() != 0) {
         kprintf("[WARN] apic_init failed, fallback PIC\n");
         pic_init();
     }
-
-    kprintf_v("[init] drivers char\n");
     drivers_init(0, 19);
-
-    kprintf_v("[init] threads\n");
     thread_init();
-    kprintf("[OK] kernel threads ready\n");
-
-    set_text_color(10);
-    kprintf("[OK] kernel init done, enable IRQs\n");
 
     drivers_init(20, 99);
     filesys_init();

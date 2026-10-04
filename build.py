@@ -995,6 +995,15 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         cwd=BUILD_DIR, out=BUILD_DIR / "wallpaper_kernel.o", deps=[],
         description="embed wallpaper.png", group="objcopy",
     ))
+    if (ROOT / "logo.png").exists():
+        tasks.append(Task(
+            name="logo_kernel.o",
+            cmd=[tools.objcopy, "-I", "binary", "-O", "elf64-x86-64",
+                 "-B", "i386:x86-64", "--set-section-alignment", ".data=64",
+                 str(ROOT / "logo.png"), "logo_kernel.o"],
+            cwd=BUILD_DIR, out=BUILD_DIR / "logo_kernel.o", deps=[],
+            description="embed logo.png", group="objcopy",
+        ))
     kernel_objs_names = [
         "mb2_entry.o", "entry.o", "kernel.o", "mb2.o", "boot_info.o", "func.o", "ioc.o", "io.o", "idle.o", "acpi.o",
         "apic.o", "pit.o", "stub.o", "syscall_entry.o", "syscall_arch.o", "syscall_entry_c.o", "arch_paging.o", "idt.o", "interrupt.o", "early.o", "pic.o",
@@ -1010,7 +1019,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         "lc_clone.o",
         "mouse.o", "gfx.o", "gpu.o", "display.o", "input.o", "udi.o",
         "udi_virtio.o", "udi_vmware.o", "font.o",
-        "theme.o", "font_kernel.o", "wallpaper_kernel.o", "shm.o", "guiserver.o",
+        "theme.o", "font_kernel.o", "wallpaper_kernel.o", "logo_kernel.o", "shm.o", "guiserver.o",
         "wm.o", "wm_anim.o", "wm_bar.o", "guiclients.o", "guiclients_term.o", "guiclients_monitor.o",
                 "guiclients_png.o", "guiclients_files.o", "guiclients_edit.o", "gui.o", "x11.o", "x11_render.o", "x11_window.o", "x11_server.o",
         "rtl8139.o", "e1000.o", "arp.o", "ip.o", "eth.o", "icmp.o",
