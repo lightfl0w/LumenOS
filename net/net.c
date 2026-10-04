@@ -1,0 +1,76 @@
+#include "net/net.h"
+
+#include "arch/cpu.h"
+#include "arch/interrupt/interrupt.h"
+#include "drivers/char/serial/console/io.h"
+#include "drivers/net/e1000/e1000.h"
+#include "drivers/net/rtl8139/rtl8139.h"
+#include "kernel/sched/thread.h"
+#include "kernel/time/pit.h"
+#include "lib/string/str.h"
+#include "net/arp.h"
+#include "net/eth.h"
+#include "net/ip.h"
+#include "net/socket.h"
+#include "net/tcp.h"
+#include "net/udp.h"
+
+NETIF g_netif;
+
+struct SCHED_LOCK net_lock;
+
+static void net_probe(NETIF *ifp) {
+    ifp->tx = rtl8139_tx;
+    ifp->rx = rtl8139_rx;
+    if (rtl8139_init(ifp) == 0)
+        return;
+    ifp->tx = e1000_tx;
+    ifp->rx = e1000_rx;
+    if (e1000_init(ifp) == 0)
+        return;
+    kprintf("[NET] no supported NIC\n");
+}
+
+static void net_rx(NETIF *ifp) {
+    static uint8_t buf[ETH_FRAME_MAX];
+    int n;
+    while ((n = ifp->rx(ifp, buf, sizeof buf)) > 0)
+        eth_input(ifp, buf, (uint32_t)n);
+}
+
+static void net_thread(void *arg) {
+    (void)arg;
+    memset(&g_netif, 0, sizeof g_netif);
+    g_netif.ip = 0x0A00020F;
+    g_netif.mask = 0xFFFFFF00;
+    g_netif.gw = 0x0A000202;
+    net_probe(&g_netif);
+    kprintf("[NET] up %u.%u.%u.%u\n", (g_netif.ip >> 24) & 0xFF, (g_netif.ip >> 16) & 0xFF,
+            (g_netif.ip >> 8) & 0xFF, g_netif.ip & 0xFF);
+    for (;;) {
+        net_rx(&g_netif);
+        arp_tick(&g_netif);
+        tcp_tick(&g_netif);
+        sock_poll();
+        thread_yield();
+    }
+}
+
+int net_enable = 1;
+
+void net_init(void) {
+    if (!net_enable) {
+        kprintf("[NET] disabled\n");
+        return;
+    }
+    lock_init(&net_lock);
+    arp_init();
+    tcp_init();
+    udp_init();
+    sock_init();
+    kernel_thread("net", 8, net_thread, NULL, 0xF);
+}
+
+uint32_t net_now_ms(void) {
+    return (uint32_t)tick * (1000u / PIT_HZ);
+}

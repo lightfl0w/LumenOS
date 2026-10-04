@@ -1,0 +1,15 @@
+[submodule "third_party/libc-testsuite"]
+	path = third_party/libc-testsuite
+	url = https://git.musl-libc.org/git/libc-testsuite
+[submodule "third_party/musl"]
+	path = third_party/musl
+	url = https://git.musl-libc.org/git/musl
+[submodule "third_party/pcre2"]
+	path = third_party/pcre2
+	url = https://github.com/PCRE2Project/pcre2.git
+[submodule "third_party/fish"]
+	path = third_party/fish
+	url = https://github.com/fish-shell/fish-shell.git
+[submodule "third_party/busybox"]
+	path = third_party/busybox
+	url = https://github.com/mirror/busybox

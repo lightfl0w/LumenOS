@@ -1,0 +1,149 @@
+#include "kernel/sync/sync.h"
+#include "drivers/char/serial/console/io.h"
+#include "kernel/asm_func.h"
+#include "kernel/assert.h"
+#include "kernel/sched/thread.h"
+void spinlock_init(struct SCHED_SPINLOCK *s) {
+    s->locked = 0;
+}
+void spinlock_acquire(struct SCHED_SPINLOCK *s) {
+    while (asm_xchg(&s->locked, 1) != 0) {
+        while (s->locked != 0) {
+            asm_pause();
+        }
+    }
+    __asm__ volatile("" : : : "memory");
+}
+void spinlock_release(struct SCHED_SPINLOCK *s) {
+    __asm__ volatile("" : : : "memory");
+    s->locked = 0;
+}
+void sema_init(struct SCHED_SEMAPHORE *psema, uint8_t value) {
+    psema->value = value;
+    list_init(&psema->waiters);
+    spinlock_init(&psema->lock);
+}
+void sema_down(struct SCHED_SEMAPHORE *psema) {
+    uint32_t old = asm_save_eflags();
+    asm_cli();
+    spinlock_acquire(&psema->lock);
+    while (psema->value == 0) {
+        list_append(&psema->waiters, &current->wait_tag);
+        uint32_t bf = thread_block_prepare(TASK_BLOCKED);
+        spinlock_release(&psema->lock);
+        thread_block_commit(bf);
+        spinlock_acquire(&psema->lock);
+    }
+    psema->value--;
+    spinlock_release(&psema->lock);
+    asm_restore_eflags(old);
+}
+void sema_up(struct SCHED_SEMAPHORE *psema) {
+    uint32_t old = asm_save_eflags();
+    asm_cli();
+    spinlock_acquire(&psema->lock);
+    if (!list_empty(&psema->waiters)) {
+        struct LIST_ELEM *e = list_pop_front(&psema->waiters);
+        struct TASK *w = list_entry(e, struct TASK, wait_tag);
+        w->wait_tag.next = 0;
+        w->wait_tag.prev = 0;
+        thread_unblock(w);
+    }
+    psema->value++;
+    spinlock_release(&psema->lock);
+    asm_restore_eflags(old);
+}
+void lock_init(struct SCHED_LOCK *plock) {
+    plock->holder = 0;
+    plock->holder_repeat_nr = 0;
+    sema_init(&plock->semaphore, 1);
+}
+void lock_acquire(struct SCHED_LOCK *plock) {
+    if (current == 0)
+        return;
+    uint32_t old = asm_save_eflags();
+    asm_cli();
+    if (plock->holder == current) {
+        plock->holder_repeat_nr++;
+        asm_restore_eflags(old);
+        return;
+    }
+    spinlock_acquire(&plock->semaphore.lock);
+    while (plock->semaphore.value == 0) {
+        list_append(&plock->semaphore.waiters, &current->wait_tag);
+        uint32_t bf = thread_block_prepare(TASK_BLOCKED);
+        spinlock_release(&plock->semaphore.lock);
+        thread_block_commit(bf);
+        spinlock_acquire(&plock->semaphore.lock);
+    }
+    plock->semaphore.value--;
+    ASSERT(plock->holder == 0);
+    ASSERT(plock->holder_repeat_nr == 0);
+    plock->holder = current;
+    plock->holder_repeat_nr = 1;
+    spinlock_release(&plock->semaphore.lock);
+    asm_restore_eflags(old);
+}
+void lock_release(struct SCHED_LOCK *plock) {
+    if (current == 0)
+        return;
+    uint32_t old = asm_save_eflags();
+    asm_cli();
+    ASSERT(plock->holder == current);
+    if (plock->holder_repeat_nr > 1) {
+        plock->holder_repeat_nr--;
+        asm_restore_eflags(old);
+        return;
+    }
+    spinlock_acquire(&plock->semaphore.lock);
+    plock->holder = 0;
+    plock->holder_repeat_nr = 0;
+    plock->semaphore.value++;
+    if (!list_empty(&plock->semaphore.waiters)) {
+        struct LIST_ELEM *e = list_pop_front(&plock->semaphore.waiters);
+        struct TASK *w = list_entry(e, struct TASK, wait_tag);
+        w->wait_tag.next = 0;
+        w->wait_tag.prev = 0;
+        thread_unblock(w);
+    }
+    spinlock_release(&plock->semaphore.lock);
+    asm_restore_eflags(old);
+}
+void rwlock_init(struct SCHED_RWLOCK *rw) {
+    sema_init(&rw->gate, 1);
+    sema_init(&rw->rmutex, 1);
+    sema_init(&rw->wlock, 1);
+    rw->readers = 0;
+}
+void rwlock_read_acquire(struct SCHED_RWLOCK *rw) {
+    if (current == 0)
+        return;
+    sema_down(&rw->gate);
+    sema_down(&rw->rmutex);
+    if (++rw->readers == 1) {
+        sema_down(&rw->wlock);
+    }
+    sema_up(&rw->rmutex);
+    sema_up(&rw->gate);
+}
+void rwlock_read_release(struct SCHED_RWLOCK *rw) {
+    if (current == 0)
+        return;
+    sema_down(&rw->rmutex);
+    if (--rw->readers == 0) {
+        sema_up(&rw->wlock);
+    }
+    sema_up(&rw->rmutex);
+}
+void rwlock_write_acquire(struct SCHED_RWLOCK *rw) {
+    if (current == 0)
+        return;
+    sema_down(&rw->gate);
+    sema_down(&rw->wlock);
+}
+void rwlock_write_release(struct SCHED_RWLOCK *rw) {
+    if (current == 0)
+        return;
+    sema_up(&rw->wlock);
+    sema_up(&rw->gate);
+}

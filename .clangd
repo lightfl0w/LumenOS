@@ -1,0 +1,9 @@
+CompileFlags:
+    Add:
+      - "-I/root/LumenOS/include"
+      - "-I/root/LumenOS/include/user/libc"
+      - "-I/root/LumenOS/include/lib"
+      - "-I/root/LumenOS/include/uapi"
+      - "-I/root/LumenOS/build/config"
+      - "-ffreestanding"
+      - "-nostdlibinc"
