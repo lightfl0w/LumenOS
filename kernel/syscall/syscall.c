@@ -11,6 +11,7 @@
 #include "fs/dir.h"
 #include "fs/file.h"
 #include "fs/fs.h"
+#include "fs/pbcache.h"
 #include "kernel/abi/linux/linux_compat.h"
 #include "kernel/abi/win32/win32.h"
 #include "kernel/asm_func.h"
@@ -106,6 +107,8 @@ static void sys_exit_group(int32_t status) {
 }
 
 static uint32_t sys_shutdown(void) {
+    kprintf("[shutdown] flushing block cache...\n");
+    pbc_flush_all();
     kprintf("[shutdown] shutting down system...\n");
     arch_poweroff();
     return 0;
@@ -1009,6 +1012,23 @@ static int sc_trace_interest(uint32_t nr) {
     case 23:
     case 232:
     case 281:
+    case 41:
+    case 42:
+    case 44:
+    case 45:
+    case 46:
+    case 47:
+    case 49:
+    case 54:
+    case 55:
+    case 82:
+    case 86:
+    case 88:
+    case 92:
+    case 93:
+    case 94:
+    case 260:
+    case 266:
         return 1;
     }
     return 0;
@@ -1018,7 +1038,7 @@ static int sc_trace_interest(uint32_t nr) {
 static void sc_read_str(uint64_t up, char *buf, uint32_t cap) {
     uint32_t i;
     buf[0] = 0;
-    if (up < USER_VADDR_START || !user_range_readable((uint32_t)up, cap - 1)) {
+    if (up < USER_EXEC64_FLOOR || !user_range_readable((uint32_t)up, cap - 1)) {
         return;
     }
     for (i = 0; i < cap - 1; i++) {
@@ -1033,7 +1053,7 @@ static void sc_read_str(uint64_t up, char *buf, uint32_t cap) {
 static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
     char pbuf[40];
     if (nr == 59 || nr == 257) {
-        sc_read_str(r->rdi, pbuf, sizeof(pbuf));
+        sc_read_str(nr == 257 ? r->rsi : r->rdi, pbuf, sizeof(pbuf));
         kprintf("[sc] pid=%d nr=%u path=%s\n", current->pid, nr, pbuf);
         return;
     }
@@ -1056,7 +1076,7 @@ static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
         for (uint32_t k = 0; k < nfds; k++) {
             uint32_t base = (uint32_t)r->rsi + k * 8;
             int32_t fd = -2;
-            if (base >= USER_VADDR_START && user_range_readable(base, 8)) {
+            if (base >= USER_EXEC64_FLOOR && user_range_readable(base, 8)) {
                 fd = *(const int32_t *)(uintptr_t)base;
             }
             kprintf("%d,", (int)fd);
@@ -1077,7 +1097,7 @@ static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
             uint32_t base = (uint32_t)r->rdi + k * 8;
             int32_t pfd = -2;
             int16_t pev = 0;
-            if (base >= USER_VADDR_START && user_range_readable(base, 8)) {
+            if (base >= USER_EXEC64_FLOOR && user_range_readable(base, 8)) {
                 pfd = *(const int32_t *)(uintptr_t)base;
                 pev = *(const int16_t *)(uintptr_t)(base + 4);
             }
@@ -1141,7 +1161,7 @@ uint64_t syscall_handler(struct ARCH_REGS *r) {
         for (uint32_t k = 0; k < 16; k++) {
             uint32_t ua = us + k * 4;
             sc_last_stk[sslot][k] =
-                (us >= USER_VADDR_START && ua < 0xc0000000u && page_is_mapped(ua))
+                (us >= USER_EXEC64_FLOOR && ua < 0xc0000000u && page_is_mapped(ua))
                     ? *(const uint32_t *)(uintptr_t)ua
                     : 0;
         }

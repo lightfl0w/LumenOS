@@ -28,8 +28,8 @@
 #define REG_RDT 0x2818
 #define REG_RA 0x5400
 
-#define TX_DESC_N 8
-#define RX_DESC_N 16
+#define TX_DESC_N 16
+#define RX_DESC_N 64
 #define RX_BUF_LEN 2048
 #define E1000_TX_WAIT_SPINS 100000u
 

@@ -51,7 +51,7 @@ static const char *exc_names[32] = {"Divide Error",
 static uint32_t tlb_retry_rip;
 static uint32_t tlb_retry_pid;
 static int handle_cow_fault(uint32_t fault_addr, uint32_t error_code) {
-    if (fault_addr < USER_VADDR_START || fault_addr >= 0xc0000000) {
+    if (fault_addr < USER_EXEC64_FLOOR || fault_addr >= 0xc0000000) {
         return 0;
     }
     if (!(error_code & 0x2)) {
@@ -139,7 +139,7 @@ void isr_handler(struct ARCH_REGS *r) {
         uint64_t cr2v;
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2v));
         uint32_t fa = (uint32_t)cr2v;
-        if (fa >= USER_VADDR_START && fa < 0xc0000000u && (fa < 0x40000000u || fa >= 0x80200000u)) {
+        if (fa >= USER_EXEC64_FLOOR && fa < 0xc0000000u) {
             set_text_color(14);
             kprintf("[pf] kernel touched unmapped user addr 0x%x, killing "
                     "pid %d (%s) eip=0x%x err=%x mapped=%d\n",

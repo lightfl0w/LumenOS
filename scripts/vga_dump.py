@@ -17,7 +17,7 @@ def strip_iac(data: bytes) -> bytes:
                 cmd = data[i + 1]
                 opt = data[i + 2]
                 i += 3
-                if cmd == 0xFA:  # subneg
+                if cmd == 0xFA:
                     try:
                         end = data.index(b"\xFF\xF0", i)
                         i = end + 2

@@ -73,10 +73,18 @@ ETC_FILES = [
     ("group", b"root:x:0:\nuser:x:1000:\n", 0o100644),
     ("shadow", b"root::0:0:99999:7:::\nuser::0:0:99999:7:::\n", 0o100600),
     ("hosts", b"127.0.0.1 localhost localhost.localdomain\n", 0o100644),
-    ("resolv.conf", b"nameserver 10.0.2.3\n", 0o100644),
+    ("resolv.conf", b"nameserver 10.0.2.3\noptions timeout:1 attempts:8\n", 0o100644),
     ("services",
      b"ftp 21/tcp\nssh 22/tcp\ndomain 53/udp\ndomain 53/tcp\n"
      b"http 80/tcp\nhttps 443/tcp\n", 0o100644),
+]
+APK_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/alpine"
+APK_BRANCH = "v3.22"
+APK_ETC_FILES = [
+    ("apk/repositories",
+     (APK_MIRROR + "/" + APK_BRANCH + "/main\n" +
+      APK_MIRROR + "/" + APK_BRANCH + "/community\n").encode(), 0o100644),
+    ("apk/world", b"", 0o100644),
 ]
 LIB_FILES = ["ld-musl-x86_64.so.1", "libc.so", "libdyndemo.so"]
 SYMLINKS = [("catlink", "/bin/cat.elf"),
@@ -139,6 +147,34 @@ def debugfs_cmds(bd, tmp, pre, names, smoke):
     for name, mode in DIRS:
         cmds.append(f"mkdir {name}")
         cmds.append(f"sif /{name} mode 0{mode:o}")
+    apk_dir = bd / "apk"
+    apk_static = apk_dir / "tools" / "apk.static"
+    if apk_static.exists():
+        cmds.append("mkdir etc/apk")
+        cmds.append("mkdir etc/apk/keys")
+        for key in sorted(apk_dir.glob("keys/*.pub")):
+            emit_file(cmds, key, f"/etc/apk/keys/{key.name}", 0o100644)
+        for name, payload, mode in APK_ETC_FILES:
+            src = tmp / ("apk_" + name.replace("/", "_"))
+            src.write_bytes(payload)
+            emit_file(cmds, src, f"/etc/{name}", mode)
+        ca_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
+        if not ca_bundle.exists():
+            ca_bundle = Path("/etc/ssl/cert.pem")
+        if ca_bundle.exists():
+            cmds.append("mkdir etc/ssl")
+            cmds.append("mkdir etc/ssl/certs")
+            emit_file(cmds, ca_bundle, "/etc/ssl/certs/ca-certificates.crt",
+                      0o100644)
+            emit_file(cmds, ca_bundle, "/etc/apk/ca.pem", 0o100644)
+        cmds.append("mkdir lib/apk")
+        cmds.append("mkdir lib/apk/db")
+        cmds.append("mkdir var")
+        cmds.append("mkdir var/cache")
+        cmds.append("mkdir var/cache/apk")
+        installed = tmp / "apk_installed"
+        installed.write_bytes(b"")
+        emit_file(cmds, installed, "/lib/apk/db/installed", 0o100644)
     for name in names:
         mode = SPECIAL_MODES.get(name, FILE_MODE)
         dest = f"/{name}" if name in ("autoexec", "shell.conf") else f"/bin/{name}"
@@ -152,6 +188,8 @@ def debugfs_cmds(bd, tmp, pre, names, smoke):
         src = tmp / f"etc_{name}"
         src.write_bytes(payload)
         emit_file(cmds, src, f"/etc/{name}", mode)
+    if apk_static.exists():
+        emit_file(cmds, apk_static, "/bin/apk.static", 0o100755)
     for name in LIB_FILES:
         src = bd / name
         if src.exists():

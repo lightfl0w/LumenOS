@@ -206,7 +206,6 @@ void cpu_idle(void) {
 static void idle(void *arg) {
     (void)arg;
     for (;;) {
-        thread_block();
         if (cpu_id() == 0) {
             pbc_flush_tick();
         }

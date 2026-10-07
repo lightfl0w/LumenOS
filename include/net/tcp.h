@@ -7,8 +7,8 @@
 #define IPPROTO_TCP 6
 #define TCP_HDR_LEN 20
 #define TCP_MSS 1460
-#define TCP_RCV_BUF 4096
-#define TCP_SND_BUF 8192
+#define TCP_RCV_BUF 32768
+#define TCP_SND_BUF 32768
 #define TCP_BACKLOG 8
 #define MAX_TCP_PCB 64
 #define TCP_INIT_RTO 1000

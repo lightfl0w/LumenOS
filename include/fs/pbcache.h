@@ -31,6 +31,7 @@ int pbc_dev_register(uint32_t dev_id, struct DISK *d, uint32_t start_lba, uint32
 int pbc_read(uint32_t dev_id, uint32_t blk, void *buf);
 int pbc_read_run(uint32_t dev_id, uint32_t blk, uint32_t cnt, void *buf);
 int pbc_write(uint32_t dev_id, uint32_t blk, const void *buf);
+int pbc_write_sync(uint32_t dev_id, uint32_t blk, const void *buf);
 void pbc_flush_all(void);
 void pbc_flush_tick(void);
 uint32_t pbc_dirty_count(void);

@@ -81,7 +81,7 @@ static struct IP_PEND *ip_pend_slot(uint32_t nh) {
 }
 
 int ip_output(NETIF *ifp, uint32_t daddr, uint8_t proto, const void *data, uint32_t len) {
-    uint8_t pkt[IP_HDR_LEN + TCP_MSS];
+    uint8_t pkt[IP_HDR_LEN + TCP_HDR_LEN + TCP_MSS];
     uint32_t tot = IP_HDR_LEN + len;
     if (tot > sizeof pkt)
         return -1;

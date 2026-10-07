@@ -164,8 +164,8 @@ int sockaddr_in_parts(struct ARCH_REGS *r, uint64_t addr, uint64_t addrlen, uint
     if (family != 2)
         return -1;
     *port = (uint16_t)((uint16_t)(tmp[2] << 8) | tmp[3]);
-    *ip = ((uint32_t)tmp[4]) | ((uint32_t)tmp[5] << 8) | ((uint32_t)tmp[6] << 16) |
-          ((uint32_t)tmp[7] << 24);
+    *ip = ((uint32_t)tmp[4] << 24) | ((uint32_t)tmp[5] << 16) | ((uint32_t)tmp[6] << 8) |
+          ((uint32_t)tmp[7]);
     return 0;
 }
 int fill_sockaddr_in(struct ARCH_REGS *r, uint64_t addr, uint64_t addrlen_ptr, uint32_t ip,
@@ -181,10 +181,10 @@ int fill_sockaddr_in(struct ARCH_REGS *r, uint64_t addr, uint64_t addrlen_ptr, u
     sa[1] = 0;
     sa[2] = (uint8_t)(port >> 8);
     sa[3] = (uint8_t)port;
-    sa[4] = (uint8_t)ip;
-    sa[5] = (uint8_t)(ip >> 8);
-    sa[6] = (uint8_t)(ip >> 16);
-    sa[7] = (uint8_t)(ip >> 24);
+    sa[4] = (uint8_t)(ip >> 24);
+    sa[5] = (uint8_t)(ip >> 16);
+    sa[6] = (uint8_t)(ip >> 8);
+    sa[7] = (uint8_t)ip;
     uint32_t n = (klen < sizeof(sa)) ? klen : (uint32_t)sizeof(sa);
     if (n != 0 && copy_to_user((void *)(uintptr_t)addr, sa, n) != 0)
         return -1;
@@ -435,10 +435,10 @@ int64_t lc_recvmsg(LC_ARGS) {
         sa[1] = 0;
         sa[2] = (uint8_t)(sport >> 8);
         sa[3] = (uint8_t)sport;
-        sa[4] = (uint8_t)sip;
-        sa[5] = (uint8_t)(sip >> 8);
-        sa[6] = (uint8_t)(sip >> 16);
-        sa[7] = (uint8_t)(sip >> 24);
+        sa[4] = (uint8_t)(sip >> 24);
+        sa[5] = (uint8_t)(sip >> 16);
+        sa[6] = (uint8_t)(sip >> 8);
+        sa[7] = (uint8_t)sip;
         memcpy((void *)(uintptr_t)mh.name, sa, 8);
     }
     mh.namelen = 16;

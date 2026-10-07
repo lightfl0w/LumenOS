@@ -5,7 +5,7 @@
 #include "net/socket.h"
 
 #define DNS_PORT 53
-#define DNS_TRIES 50
+#define DNS_TRIES 150
 #define DNS_WAIT_MS 200
 #define DNS_FDSET_WORDS (SEL_FD_SET_BYTES / 4)
 #define DNS_NS_DEFAULT 0x0A000203u
@@ -164,8 +164,11 @@ uint32_t dns_resolve(const char *hostname, uint32_t *out_ip) {
         int n;
         memset(rf, 0, sizeof rf);
         dns_fd_set(rf, fd);
-        if (net_select(fd + 1, rf, 0, 0, DNS_WAIT_MS) <= 0)
+        if (net_select(fd + 1, rf, 0, 0, DNS_WAIT_MS) <= 0) {
+            if (tries != 0 && tries % 5 == 0)
+                net_sendto(fd, q, (uint32_t)qn, s_ns, DNS_PORT);
             continue;
+        }
         n = net_recvfrom(fd, r, sizeof r, &saddr, &sport);
         if (n <= 0)
             continue;

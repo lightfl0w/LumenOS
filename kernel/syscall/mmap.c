@@ -111,7 +111,7 @@ uint32_t sys_mmap2(uint32_t addr, uint32_t len, uint32_t prot, uint32_t flags, u
 int32_t sys_munmap(uint32_t addr, uint32_t len) {
     if (addr == 0 || len == 0 || (addr & (PAGE_SIZE - 1)))
         return -LINUX_EINVAL;
-    if (addr < USER_VADDR_START || addr >= USER_SPACE_END || len > USER_SPACE_END - addr)
+    if (addr < USER_EXEC64_FLOOR || addr >= USER_SPACE_END || len > USER_SPACE_END - addr)
         return -LINUX_EINVAL;
     uint32_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     if (addr < USER_HIGH_MMIO_END && addr + pages * PAGE_SIZE > USER_LOW_CEILING)
@@ -125,7 +125,7 @@ int32_t sys_mprotect(uint32_t addr, uint32_t len, uint32_t prot) {
         return -LINUX_EINVAL;
     if (len == 0)
         return 0;
-    if (addr < USER_VADDR_START || addr >= USER_SPACE_END || len > USER_SPACE_END - addr)
+    if (addr < USER_EXEC64_FLOOR || addr >= USER_SPACE_END || len > USER_SPACE_END - addr)
         return -LINUX_EINVAL;
     uint32_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     if (addr < USER_HIGH_MMIO_END && addr + pages * PAGE_SIZE > USER_LOW_CEILING)

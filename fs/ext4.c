@@ -6,6 +6,7 @@
 #include "drivers/char/serial/rtc.h"
 #include "fs/dir.h"
 #include "fs/pbcache.h"
+#include "kernel/time/pit.h"
 #include "kernel/sync/sync.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
@@ -173,6 +174,10 @@ static int jsb_read(uint32_t blk, void *buf) {
     return 0;
 }
 
+static int ext4_sync_write(uint32_t blk, const void *buf) {
+    return pbc_write_sync(start, blk, buf);
+}
+
 static int jsb_write(uint32_t blk, const void *buf) {
     if (disk == NULL) {
         return -1;
@@ -276,7 +281,7 @@ static int txn_commit(void) {
         off += 8;
     }
     uint32_t log = j_first;
-    if (ext4_raw_write(jrnl_phys(log), jb) != 0) {
+    if (ext4_sync_write(jrnl_phys(log), jb) != 0) {
         free_kernel_page((uint32_t)jb);
         free_kernel_page((uint32_t)db);
         txn_drop();
@@ -287,7 +292,7 @@ static int txn_commit(void) {
         if (ld32(db) == EXT4_JBD2_MAGIC) {
             st32(db, 0);
         }
-        if (ext4_raw_write(jrnl_phys(log + 1 + i), db) != 0) {
+        if (ext4_sync_write(jrnl_phys(log + 1 + i), db) != 0) {
             free_kernel_page((uint32_t)jb);
             free_kernel_page((uint32_t)db);
             txn_drop();
@@ -298,7 +303,7 @@ static int txn_commit(void) {
     wr_be32(jb + 0, EXT4_JBD2_MAGIC);
     wr_be32(jb + 4, EXT4_JT_COMMIT);
     wr_be32(jb + 8, seq);
-    if (ext4_raw_write(jrnl_phys(log + 1 + t_cnt), jb) != 0) {
+    if (ext4_sync_write(jrnl_phys(log + 1 + t_cnt), jb) != 0) {
         free_kernel_page((uint32_t)jb);
         free_kernel_page((uint32_t)db);
         txn_drop();
@@ -486,7 +491,7 @@ static void ext4_sb_sync(void) {
     }
 }
 
-static int ext4_group_alloc_block(uint32_t g) {
+static uint32_t ext4_group_alloc_block_run(uint32_t g, uint32_t want, uint32_t *first_out) {
     uint32_t bm_blk = gd_block_bitmap(g);
     uint8_t *bm = (uint8_t *)get_kernel_pages(1);
     if (bm == NULL) {
@@ -498,12 +503,49 @@ static int ext4_group_alloc_block(uint32_t g) {
         return 0;
     }
     uint32_t cnt = group_block_count(g);
+    if (gd_flags(g) & EXT4_BG_BLOCK_UNINIT) {
+        memset(bm, 0, bs);
+        uint32_t bb = gd_block_bitmap(g) - group_first_block(g);
+        if (bb < cnt) {
+            bm[bb >> 3] |= (uint8_t)(1u << (bb & 7));
+        }
+        uint32_t ib = gd_inode_bitmap(g) - group_first_block(g);
+        if (ib < cnt) {
+            bm[ib >> 3] |= (uint8_t)(1u << (ib & 7));
+        }
+        uint32_t it = gd_inode_table(g) - group_first_block(g);
+        uint32_t itn = (inodes_per_group * inode_size + bs - 1) / bs;
+        for (uint32_t k = 0; k < itn; k++) {
+            if (it + k < cnt) {
+                uint32_t bit = it + k;
+                bm[bit >> 3] |= (uint8_t)(1u << (bit & 7));
+            }
+        }
+        if (g == 1 || g == 3 || g == 5 || g == 7 || g == 9 || g == 25 || g == 27 ||
+            g == 49 || g == 81 || g == 125 || g == 243 || g == 343 || g == 625 ||
+            g == 729 || g == 2187 || g == 2401 || g == 3125) {
+            for (uint32_t k = 0; k < 1 + gdt_blocks; k++) {
+                if (k < cnt) {
+                    bm[k >> 3] |= (uint8_t)(1u << (k & 7));
+                }
+            }
+        }
+        st16(gdt_desc(g) + 0x12, (uint16_t)(gd_flags(g) & ~(uint16_t)EXT4_BG_BLOCK_UNINIT));
+        uint32_t used = 0;
+        for (uint32_t i = 0; i < cnt; i++) {
+            used += (bm[i >> 3] >> (i & 7)) & 1u;
+        }
+        gd_set16(g, 0x0C, 0x2C, cnt - used);
+    }
     uint32_t found = 0xFFFFFFFFu;
-    for (uint32_t i = 0; i < cnt; i++) {
+    uint32_t marked = 0;
+    for (uint32_t i = 0; i < cnt && marked < want; i++) {
         if (!(bm[i >> 3] & (uint8_t)(1u << (i & 7)))) {
             bm[i >> 3] |= (uint8_t)(1u << (i & 7));
-            found = i;
-            break;
+            if (found == 0xFFFFFFFFu) {
+                found = i;
+            }
+            marked++;
         }
     }
     if (found == 0xFFFFFFFFu) {
@@ -511,9 +553,9 @@ static int ext4_group_alloc_block(uint32_t g) {
         return 0;
     }
     bitmap_csum_set(g, bm, 0);
-    gd_set16(g, 0x0C, 0x2C, gd_free_blocks(g) - 1);
+    gd_set16(g, 0x0C, 0x2C, gd_free_blocks(g) - marked);
     gdt_csum_set(g);
-    free_blocks--;
+    free_blocks -= marked;
     txn_reset();
     int rc = txn_add(bm_blk, bm) == 0 &&
              txn_add(gdt_block_of(g), g_gdt + (gdt_block_of(g) - gdt_blk) * bs) == 0;
@@ -530,29 +572,39 @@ static int ext4_group_alloc_block(uint32_t g) {
     }
     free_kernel_page((uint32_t)bm);
     if (!rc) {
+        free_blocks += marked;
         txn_drop();
         return 0;
     }
     if (txn_commit() != 0) {
+        free_blocks += marked;
         return 0;
     }
-    return group_first_block(g) + found;
+    *first_out = group_first_block(g) + found;
+    return marked;
 }
+
+static uint32_t prealloc_next;
+static uint32_t prealloc_left;
 
 static uint32_t ext4_alloc_block(void) {
     if (disk == NULL) {
         return 0;
     }
+    if (prealloc_left > 0) {
+        prealloc_left--;
+        return prealloc_next++;
+    }
     for (uint32_t g = 0; g < n_groups; g++) {
-        if (gd_flags(g) & EXT4_BG_BLOCK_UNINIT) {
+        if (gd_free_blocks(g) == 0 && !(gd_flags(g) & EXT4_BG_BLOCK_UNINIT)) {
             continue;
         }
-        if (gd_free_blocks(g) == 0) {
-            continue;
-        }
-        uint32_t b = ext4_group_alloc_block(g);
-        if (b != 0) {
-            return b;
+        uint32_t first = 0;
+        uint32_t n = ext4_group_alloc_block_run(g, 512, &first);
+        if (n != 0) {
+            prealloc_next = first + 1;
+            prealloc_left = n - 1;
+            return first;
         }
     }
     return 0;
@@ -629,6 +681,11 @@ static uint32_t ext4_group_alloc_inode(uint32_t g) {
         free_kernel_page((uint32_t)bm);
         return 0;
     }
+    if (gd_flags(g) & EXT4_BG_INODE_UNINIT) {
+        memset(bm, 0, bs);
+        st16(gdt_desc(g) + 0x12, (uint16_t)(gd_flags(g) & ~(uint16_t)EXT4_BG_INODE_UNINIT));
+        gd_set16(g, 0x0E, 0x2E, inodes_per_group);
+    }
     uint32_t found = 0xFFFFFFFFu;
     for (uint32_t i = 0; i < inodes_per_group; i++) {
         if (!(bm[i >> 3] & (uint8_t)(1u << (i & 7)))) {
@@ -676,10 +733,7 @@ static uint32_t ext4_alloc_inode(void) {
         return 0;
     }
     for (uint32_t g = 0; g < n_groups; g++) {
-        if (gd_flags(g) & EXT4_BG_INODE_UNINIT) {
-            continue;
-        }
-        if (gd_free_inodes(g) == 0) {
+        if (gd_free_inodes(g) == 0 && !(gd_flags(g) & EXT4_BG_INODE_UNINIT)) {
             continue;
         }
         uint32_t ino = ext4_group_alloc_inode(g);
@@ -825,7 +879,8 @@ static int ext_lookup(const struct FS_INODE *ino, uint32_t fblk, uint32_t *out) 
                     len -= 32768u;
                 }
                 if (fblk >= e->ee_block && fblk < e->ee_block + len) {
-                    uint32_t s = e->ee_start_lo | ((uint32_t)e->ee_start_hi << 16);
+                    uint64_t pb = (uint64_t)e->ee_start_lo | ((uint64_t)e->ee_start_hi << 32);
+                    uint32_t s = (uint32_t)pb;
                     *out = s + (fblk - e->ee_block);
                     free_kernel_page((uint32_t)blk);
                     return 0;
@@ -888,7 +943,7 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         if (len > 32768u) {
             len -= 32768u;
         }
-        uint32_t st = pr->ee_start_lo | ((uint32_t)pr->ee_start_hi << 16);
+        uint32_t st = (uint32_t)((uint64_t)pr->ee_start_lo | ((uint64_t)pr->ee_start_hi << 32));
         if (fblk < pr->ee_block + len) {
             return 0;
         }
@@ -907,11 +962,11 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         if (len > 32768u) {
             len -= 32768u;
         }
-        uint32_t st = nx->ee_start_lo | ((uint32_t)nx->ee_start_hi << 16);
+        uint32_t st = (uint32_t)((uint64_t)nx->ee_start_lo | ((uint64_t)nx->ee_start_hi << 32));
         if (nx->ee_block == fblk + 1u && st == pblk + 1u && len < 32768u) {
             nx->ee_block = fblk;
-            nx->ee_start_lo = pblk & 0xFFFFu;
-            nx->ee_start_hi = (uint16_t)(pblk >> 16);
+            nx->ee_start_lo = pblk;
+            nx->ee_start_hi = (uint16_t)(pblk >> 32);
             nx->ee_len = (uint16_t)(len + 1u);
             if (!is_root) {
                 ext_node_csum(ino, p, max);
@@ -940,8 +995,8 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         struct EXT4_EXTENT *ne = ext_ent(tmp, pos);
         ne->ee_block = fblk;
         ne->ee_len = 1;
-        ne->ee_start_lo = pblk & 0xFFFFu;
-        ne->ee_start_hi = (uint16_t)(pblk >> 16);
+        ne->ee_start_lo = pblk;
+        ne->ee_start_hi = (uint16_t)(pblk >> 32);
         for (uint32_t i = pos; i < n; i++) {
             *ext_ent(tmp, i + 1) = *ext_ent(p, i);
         }
@@ -952,8 +1007,8 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         struct EXT4_EXTENT *ne = ext_ent(p, pos);
         ne->ee_block = fblk;
         ne->ee_len = 1;
-        ne->ee_start_lo = pblk & 0xFFFFu;
-        ne->ee_start_hi = (uint16_t)(pblk >> 16);
+        ne->ee_start_lo = pblk;
+        ne->ee_start_hi = (uint16_t)(pblk >> 32);
         h->eh_entries = (uint16_t)total;
         if (!is_root) {
             ext_node_csum(ino, p, max);
@@ -1293,8 +1348,8 @@ static int ext_insert(struct FS_INODE *ino, uint32_t fblk, uint32_t pblk) {
         struct EXT4_EXTENT *e = ext_ent(r, 0);
         e->ee_block = fblk;
         e->ee_len = 1;
-        e->ee_start_lo = pblk & 0xFFFFu;
-        e->ee_start_hi = (uint16_t)(pblk >> 16);
+        e->ee_start_lo = pblk;
+        e->ee_start_hi = (uint16_t)(pblk >> 32);
         h->eh_entries = 1;
         return 0;
     }
@@ -1319,7 +1374,8 @@ static void ext_free_tree(uint32_t blk, uint8_t *buf) {
             if (len > 32768u) {
                 len -= 32768u;
             }
-            uint32_t s = e->ee_start_lo | ((uint32_t)e->ee_start_hi << 16);
+            uint64_t pb = (uint64_t)e->ee_start_lo | ((uint64_t)e->ee_start_hi << 32);
+                    uint32_t s = (uint32_t)pb;
             for (uint32_t k = 0; k < len; k++) {
                 ext4_free_block(s + k);
             }
@@ -1544,9 +1600,11 @@ static int ext4_ensure_block(struct FS_INODE *ino, uint32_t fblk, uint32_t *out)
     }
     b = ext4_alloc_block();
     if (b == 0) {
+        kprintf("[DBG] alloc_block fail ino=%u fblk=%u\n", ino->i_no, fblk);
         return -1;
     }
     if (ext_insert(ino, fblk, b) != 0) {
+        kprintf("[DBG] ext_insert fail ino=%u fblk=%u pblk=%u\n", ino->i_no, fblk, b);
         ext4_free_block(b);
         return -1;
     }
@@ -1566,7 +1624,13 @@ static int ext4_write_to_inode_impl(struct FS_INODE *ino, uint32_t off, const vo
     if (disk == NULL || ino == NULL || ino->i_no == 0) {
         return 0;
     }
-    uint8_t *blk = (uint8_t *)get_kernel_pages(1);
+    uint8_t *blk = NULL;
+    for (int tries = 0; tries < 4 && blk == NULL; tries++) {
+        blk = (uint8_t *)get_kernel_pages(1);
+        if (blk == NULL && tries < 3) {
+            mtime_sleep(2);
+        }
+    }
     if (blk == NULL) {
         return 0;
     }
@@ -1576,16 +1640,22 @@ static int ext4_write_to_inode_impl(struct FS_INODE *ino, uint32_t off, const vo
         uint32_t within = (off + done) % bs;
         uint32_t addr = 0;
         if (ext4_ensure_block(ino, fblk, &addr) != 0) {
+            kprintf("[DBG] shortwrite ino=%u off=%u done=%u count=%u\n",
+                    ino->i_no, off, done, count);
             break;
         }
-        memset(blk, 0, 4096);
-        ext4_read_block(addr, blk);
         uint32_t chunk = bs - within;
         if (chunk > count - done) {
             chunk = count - done;
         }
-        memcpy(blk + within, (const uint8_t *)buf + done, chunk);
-        ext4_store_data(addr, blk);
+        if (within == 0 && chunk == bs) {
+            ext4_store_data(addr, buf + done);
+        } else {
+            memset(blk, 0, 4096);
+            ext4_read_block(addr, blk);
+            memcpy(blk + within, (const uint8_t *)buf + done, chunk);
+            ext4_store_data(addr, blk);
+        }
         done += chunk;
     }
     free_kernel_page((uint32_t)blk);
@@ -1623,7 +1693,8 @@ static void ext4_truncate_inode_impl(struct FS_INODE *ino) {
                     if (len > 32768u) {
                         len -= 32768u;
                     }
-                    uint32_t s = e->ee_start_lo | ((uint32_t)e->ee_start_hi << 16);
+                    uint64_t pb = (uint64_t)e->ee_start_lo | ((uint64_t)e->ee_start_hi << 32);
+                    uint32_t s = (uint32_t)pb;
                     for (uint32_t k = 0; k < len; k++) {
                         ext4_free_block(s + k);
                     }
@@ -2286,7 +2357,7 @@ static int ext4_journal_map_init(uint32_t jinum) {
             return -1;
         }
         j_map_log[j_nmap] = e->ee_block;
-        j_map_phys[j_nmap] = e->ee_start_lo | ((uint32_t)e->ee_start_hi << 16);
+        j_map_phys[j_nmap] = (uint32_t)((uint64_t)e->ee_start_lo | ((uint64_t)e->ee_start_hi << 32));
         j_nmap++;
     }
     if (j_nmap == 0 || j_map_log[0] != 0) {
@@ -2481,6 +2552,8 @@ int ext4_init(void) {
         if (ext4_load_gdt() != 0) {
             return -1;
         }
+        prealloc_next = 0;
+        prealloc_left = 0;
         has_journal = ((ld32(g_sb + 0x5C) & 0x4u) != 0) && (ld32(g_sb + 0xE0) != 0);
         if (has_journal) {
             if (ext4_journal_map_init(ld32(g_sb + 0xE0)) != 0) {

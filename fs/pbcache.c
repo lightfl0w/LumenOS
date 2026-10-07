@@ -1,4 +1,9 @@
 #include "fs/pbcache.h"
+
+#include "kernel/sched/thread.h"
+#include "kernel/time/pit.h"
+
+static void pbc_flush_thread(void *arg);
 #include "drivers/char/serial/console/io.h"
 #include "kernel/asm_func.h"
 #include "kernel/sync/sync.h"
@@ -82,6 +87,7 @@ int pbc_dev_register(uint32_t dev_id, struct DISK *d, uint32_t start_lba, uint32
         }
         pbc_lock.locked = 0;
         s_pool_ready = 1;
+        kernel_thread("pbcflush", 10, pbc_flush_thread, NULL, 0xF);
     }
     struct PBC_DEV *dv = &s_devs[s_nr_devs++];
     dv->id = dev_id;
@@ -347,6 +353,29 @@ int pbc_write(uint32_t dev, uint32_t blk, const void *buf) {
     return 0;
 }
 
+int pbc_write_sync(uint32_t dev, uint32_t blk, const void *buf) {
+    if (pbc_write(dev, blk, buf) != 0) {
+        return -1;
+    }
+    if (s_nr_slots == 0) {
+        return 0;
+    }
+    uint32_t f = pbc_lk();
+    struct PBC_SLOT *s = pbc_find(dev, blk);
+    if (s == NULL || s->busy) {
+        pbc_unlk(f);
+        return 0;
+    }
+    s->busy = 1;
+    pbc_unlk(f);
+    pbc_write_to_disk(dev_of(s->dev), s->blk, s->data);
+    f = pbc_lk();
+    s->dirty = 0;
+    s->busy = 0;
+    pbc_unlk(f);
+    return 0;
+}
+
 static void pbc_flush_slot(struct PBC_SLOT *s) {
     uint32_t f = pbc_lk();
     if (s->valid == 0 || s->dirty == 0 || s->busy) {
@@ -374,6 +403,14 @@ void pbc_flush_all(void) {
     }
     for (uint32_t i = 0; i < s_nr_slots; i++) {
         pbc_flush_slot(&s_slots[i]);
+    }
+}
+
+static void pbc_flush_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        mtime_sleep(1000);
+        pbc_flush_all();
     }
 }
 

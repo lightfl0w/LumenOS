@@ -144,9 +144,8 @@ static int sock_block(struct SOCKET *s, uint8_t wtype, uint32_t timeout_ms) {
             continue;
         }
         s->waiter = current;
-        uint32_t bf = thread_block_prepare(TASK_BLOCKED);
         lock_release(&net_lock);
-        thread_block_commit(bf);
+        mtime_sleep(1);
         lock_acquire(&net_lock);
         if (s->waiter == current)
             s->waiter = 0;
@@ -190,6 +189,7 @@ int net_socket(int domain, int type, int proto) {
         return -1;
     }
     s->type = (uint8_t)type;
+    s->nonblock = (flags & 0x800u) ? 1 : 0;
     if (type == SOCK_DGRAM) {
         s->upcb = udp_pcb_alloc();
         if (!s->upcb) {
@@ -294,6 +294,18 @@ int net_connect(int fd, uint32_t ip, uint16_t port) {
     return ok ? 0 : -1;
 }
 
+static int udp_autobind(struct SOCKET *s) {
+    if (s->upcb->local_port != 0) {
+        return 0;
+    }
+    uint16_t port = net_alloc_port();
+    if (port == 0) {
+        return -1;
+    }
+    s->upcb->local_port = port;
+    return 0;
+}
+
 int net_send(int fd, const void *buf, uint32_t len) {
     lock_acquire(&net_lock);
     struct SOCKET *s = sock_get(fd);
@@ -304,6 +316,10 @@ int net_send(int fd, const void *buf, uint32_t len) {
     if (s->type == SOCK_DGRAM) {
         extern NETIF g_netif;
         if (!s->upcb || !s->upcb->remote_ip) {
+            lock_release(&net_lock);
+            return -1;
+        }
+        if (udp_autobind(s) != 0) {
             lock_release(&net_lock);
             return -1;
         }
@@ -377,6 +393,10 @@ int net_sendto(int fd, const void *buf, uint32_t len, uint32_t daddr, uint16_t d
     lock_acquire(&net_lock);
     struct SOCKET *s = sock_get(fd);
     if (s == NULL || s->type != SOCK_DGRAM) {
+        lock_release(&net_lock);
+        return -1;
+    }
+    if (s->upcb == NULL || udp_autobind(s) != 0) {
         lock_release(&net_lock);
         return -1;
     }

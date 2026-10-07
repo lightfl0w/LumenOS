@@ -51,10 +51,13 @@ int32_t sys_chown(const char *path, uint32_t uid, uint32_t gid);
 int fs_stat_full(const char *path, uint32_t *ino_no, uint32_t *size, uint32_t *mode, uint32_t *uid,
                  uint32_t *gid, int follow);
 int32_t sys_symlink(const char *target, const char *linkpath);
+int fs_link_path(const char *oldpath, const char *newpath, int follow);
+int sys_link(const char *oldpath, const char *newpath);
 int fs_check_perm(const struct FS_INODE *ino, uint32_t bits);
 int fs_is_chardev(const struct FS_INODE *ino);
 uint32_t fs_chardev_dev(const struct FS_INODE *ino);
 int fs_rename_path(const char *oldpath, const char *newpath);
 int fs_truncate_path(const char *path, uint32_t length);
+int fs_truncate_inode_len(struct FS_INODE *ino, uint32_t length);
 
 #endif

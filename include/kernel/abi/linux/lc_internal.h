@@ -212,6 +212,8 @@ int64_t lc_lstat(LC_ARGS);
 int64_t lc_statfs(LC_ARGS);
 int64_t lc_symlink(LC_ARGS);
 int64_t lc_symlinkat(LC_ARGS);
+int64_t lc_link(LC_ARGS);
+int64_t lc_linkat(LC_ARGS);
 int64_t lc_sysinfo(LC_ARGS);
 int64_t lc_tgkill(LC_ARGS);
 int64_t lc_timerfd_create(LC_ARGS);

@@ -142,10 +142,10 @@ static int sigframe_valid(uint64_t cs, uint64_t rip, uint64_t rsp, uint64_t ss, 
     if (!arch_ss_is_user(ss)) {
         return 0;
     }
-    if (rip < USER_VADDR_START || rip >= USER_SPACE_END) {
+    if (rip < USER_EXEC64_FLOOR || rip >= USER_SPACE_END) {
         return 0;
     }
-    if (rsp < USER_VADDR_START || rsp >= USER_SPACE_END) {
+    if (rsp < USER_EXEC64_FLOOR || rsp >= USER_SPACE_END) {
         return 0;
     }
     if ((rflags >> 32) != 0 || (rflags & 0x1AF028ull) != 0 || (rflags & 0x202ull) != 0x202ull) {
@@ -464,7 +464,7 @@ uint64_t sys_sigreturn(struct ARCH_REGS *r) {
     struct TASK *cur = current;
     if (arch_cs_is_user64(r->cs)) {
         uint64_t faddr = r->user_rsp - 8;
-        if (faddr < USER_VADDR_START || faddr > USER_SPACE_END - sizeof(struct SYS_SIGFRAME64) ||
+        if (faddr < USER_EXEC64_FLOOR || faddr > USER_SPACE_END - sizeof(struct SYS_SIGFRAME64) ||
             !user_range_readable((uint32_t)faddr, sizeof(struct SYS_SIGFRAME64))) {
             signal_terminate(cur, SIGSEGV);
             return (uint64_t)-1;
@@ -499,7 +499,7 @@ uint64_t sys_sigreturn(struct ARCH_REGS *r) {
         return sf->rax;
     }
     uint64_t faddr = r->user_esp - 4;
-    if (faddr < USER_VADDR_START || faddr > USER_SPACE_END - sizeof(struct SYS_SIGFRAME) ||
+    if (faddr < USER_EXEC64_FLOOR || faddr > USER_SPACE_END - sizeof(struct SYS_SIGFRAME) ||
         !user_range_readable((uint32_t)faddr, sizeof(struct SYS_SIGFRAME))) {
         signal_terminate(cur, SIGSEGV);
         return (uint64_t)-1;

@@ -15,14 +15,14 @@
 #include "mm/pool.h"
 
 static void mark_child_bitmap(struct TASK *child, uint32_t vaddr) {
-    uint32_t bit = (vaddr - USER_VADDR_START) / PAGE_SIZE;
-    if (vaddr >= USER_VADDR_START && bit < child->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8) {
+    uint32_t bit = (vaddr - USER_EXEC64_FLOOR) / PAGE_SIZE;
+    if (vaddr >= USER_EXEC64_FLOOR && bit < child->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8) {
         bitmap_set(&child->userprog_v_addr.vaddr_bitmap, bit, 1);
     }
 }
 
 static int cow_vaddr_ok(uint32_t vaddr) {
-    return vaddr >= USER_VADDR_START &&
+    return vaddr >= USER_EXEC64_FLOOR &&
            !(vaddr >= KERNEL_VADDR_START && vaddr < KERNEL_VADDR_START + KERNEL_VADDR_SIZE) &&
            vaddr < 0xc0000000;
 }

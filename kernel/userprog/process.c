@@ -188,8 +188,8 @@ static void space_release_ex(uint32_t pml4_phys, struct TASK *owner, int release
                         }
                         uint64_t vaddr = ((uint64_t)pdp_idx << 30) + ((uint64_t)pd_idx << 21) +
                                          ((uint64_t)pte_idx << 12);
-                        uint32_t bit = (uint32_t)((vaddr - USER_VADDR_START) / PAGE_SIZE);
-                        if (owner == NULL || vaddr < USER_VADDR_START || vaddr >= 0xc0000000u ||
+                        uint32_t bit = (uint32_t)((vaddr - USER_EXEC64_FLOOR) / PAGE_SIZE);
+                        if (owner == NULL || vaddr < USER_EXEC64_FLOOR || vaddr >= 0xc0000000u ||
                             bit >= owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8 ||
                             bitmap_scan_test(&owner->userprog_v_addr.vaddr_bitmap, bit) != 1) {
                             pt_remaining++;
@@ -278,12 +278,12 @@ void free_user_space(struct TASK *t, uint32_t pml4_phys) {
     space_release_ex(pml4_phys, t, own);
 }
 void create_user_vaddr_bitmap(struct TASK *user_prog) {
-    user_prog->userprog_v_addr.vaddr_start = USER_VADDR_START;
+    user_prog->userprog_v_addr.vaddr_start = USER_EXEC64_FLOOR;
     uint32_t bitmap_pg_cnt =
-        DIV_ROUND_UP((0xc0000000 - USER_VADDR_START) / PAGE_SIZE / 8, PAGE_SIZE);
+        DIV_ROUND_UP((0xc0000000 - USER_EXEC64_FLOOR) / PAGE_SIZE / 8, PAGE_SIZE);
     user_prog->userprog_v_addr.vaddr_bitmap.bits = (uint8_t *)get_kernel_pages(bitmap_pg_cnt);
     user_prog->userprog_v_addr.vaddr_bitmap.btmp_bytes_len =
-        (0xc0000000 - USER_VADDR_START) / PAGE_SIZE / 8;
+        (0xc0000000 - USER_EXEC64_FLOOR) / PAGE_SIZE / 8;
     bitmap_init(&user_prog->userprog_v_addr.vaddr_bitmap);
 }
 void process_execute(char *path, char *name) {

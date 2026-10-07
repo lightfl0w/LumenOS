@@ -172,6 +172,70 @@ static int fs_create_common(const char *pathname, uint32_t mode, int is_dir) {
     return (int)ino;
 }
 
+int fs_link_path(const char *oldpath, const char *newpath, int follow) {
+    if (oldpath == NULL || newpath == NULL) {
+        current->errno = 14;
+        return -1;
+    }
+    char opar[MAX_PATH_LEN];
+    char obase[MAX_PATH_LEN];
+    char npar[MAX_PATH_LEN];
+    char nbase[MAX_PATH_LEN];
+    if (split_parent_path(oldpath, opar, obase, MAX_PATH_LEN) ||
+        split_parent_path(newpath, npar, nbase, MAX_PATH_LEN)) {
+        current->errno = 22;
+        return -1;
+    }
+    uint32_t npino = get_parent_inode(npar);
+    if (npino == 0) {
+        current->errno = 2;
+        return -1;
+    }
+    if (strcmp(nbase, ".") == 0 || strcmp(nbase, "..") == 0) {
+        current->errno = 22;
+        return -1;
+    }
+    uint32_t oino = 0;
+    int oft = 0;
+    if (fs_lookup_ftype(oldpath, &oino, &oft, follow)) {
+        current->errno = 2;
+        return -1;
+    }
+    if (oft == FT_DIRECTORY) {
+        current->errno = 1;
+        return -1;
+    }
+    if (fs_lookup_ftype(newpath, &(uint32_t){0}, &(int){0}, 0) == 0) {
+        current->errno = 17;
+        return -1;
+    }
+    struct FS_INODE npar_ino;
+    struct FS_INODE obj;
+    if (fs_read_inode(npino, &npar_ino) || fs_read_inode(oino, &obj)) {
+        current->errno = 5;
+        return -1;
+    }
+    if (fs_check_perm(&npar_ino, 2u)) {
+        current->errno = 13;
+        return -1;
+    }
+    if (obj.i_links_count + 1u > 0xFFFFu) {
+        current->errno = 2;
+        return -1;
+    }
+    uint8_t dt = oft == FT_SYMLINK ? FS_DT_LNK : 1u;
+    if (fs_add_entry_dt(&npar_ino, oino, nbase, dt)) {
+        current->errno = 5;
+        return -1;
+    }
+    obj.i_links_count++;
+    return fs_write_inode(oino, &obj) ? -1 : 0;
+}
+
+int sys_link(const char *oldpath, const char *newpath) {
+    return fs_link_path(oldpath, newpath, 1);
+}
+
 static void fs_free_best_effort(struct FS_INODE *ino) {
     fs_truncate_inode(ino);
     fs_write_inode(ino->i_no, ino);
@@ -275,8 +339,14 @@ int fs_stat_full(const char *path, uint32_t *ino_out, uint32_t *size, uint32_t *
 int32_t sys_chown(const char *path, uint32_t uid, uint32_t gid) {
     uint32_t ino_no = 0;
     int ft = 0;
-    if (path == NULL || fs_lookup_ftype(path, &ino_no, &ft, 1))
+    if (path == NULL) {
+        current->errno = 2;
         return -1;
+    }
+    if (fs_lookup_ftype(path, &ino_no, &ft, 1)) {
+        current->errno = 2;
+        return -1;
+    }
     struct FS_INODE obj;
     if (fs_read_inode(ino_no, &obj))
         return -1;
@@ -571,6 +641,10 @@ static int remove_entry_common(const char *pathname, int want_dir, int check_emp
     if (fs_remove_entry(&par, base)) {
         return -1;
     }
+    if (obj.i_links_count > 1u) {
+        obj.i_links_count--;
+        return fs_write_inode(obj.i_no, &obj) ? -1 : 0;
+    }
     fs_truncate_inode(&obj);
     fs_write_inode(obj.i_no, &obj);
     fs_free_inode(obj.i_no);
@@ -628,9 +702,14 @@ int fs_rename_path(const char *oldpath, const char *newpath) {
             current->errno = 5;
             return -1;
         }
-        fs_truncate_inode(&ex);
-        fs_write_inode(exino, &ex);
-        fs_free_inode(exino);
+        if (ex.i_links_count > 1u) {
+            ex.i_links_count--;
+            fs_write_inode(exino, &ex);
+        } else {
+            fs_truncate_inode(&ex);
+            fs_write_inode(exino, &ex);
+            fs_free_inode(exino);
+        }
     }
     if (oft == FT_DIRECTORY && opino != npino) {
         current->errno = 18;
@@ -658,6 +737,51 @@ int fs_rename_path(const char *oldpath, const char *newpath) {
     return 0;
 }
 
+int fs_truncate_inode_len(struct FS_INODE *ino, uint32_t length) {
+    if (ino == NULL || ino->i_no == 0) {
+        return -1;
+    }
+    uint32_t old = ino->i_size;
+    if (length == old) {
+        return 0;
+    }
+    if (length == 0) {
+        fs_truncate_inode(ino);
+        return fs_write_inode(ino->i_no, ino) ? -1 : 0;
+    }
+    if (length < old) {
+        uint8_t zeros[256];
+        memset(zeros, 0, sizeof(zeros));
+        uint32_t off = length;
+        while (off < old) {
+            uint32_t chunk = old - off;
+            if (chunk > sizeof(zeros)) {
+                chunk = sizeof(zeros);
+            }
+            if (fs_write_to_inode(ino, off, zeros, chunk) < 0) {
+                return -1;
+            }
+            off += chunk;
+        }
+        ino->i_size = length;
+        return fs_write_inode(ino->i_no, ino) ? -1 : 0;
+    }
+    uint8_t zeros[256];
+    memset(zeros, 0, sizeof(zeros));
+    uint32_t off = old;
+    while (off < length) {
+        uint32_t chunk = length - off;
+        if (chunk > sizeof(zeros)) {
+            chunk = sizeof(zeros);
+        }
+        if (fs_write_to_inode(ino, off, zeros, chunk) < 0) {
+            return -1;
+        }
+        off += chunk;
+    }
+    return fs_write_inode(ino->i_no, ino) ? -1 : 0;
+}
+
 int fs_truncate_path(const char *path, uint32_t length) {
     if (path == NULL) {
         current->errno = 14;
@@ -682,41 +806,9 @@ int fs_truncate_path(const char *path, uint32_t length) {
         current->errno = 13;
         return -1;
     }
-    uint32_t old = obj.i_size;
-    if (length < old) {
-        uint8_t zeros[256];
-        memset(zeros, 0, sizeof(zeros));
-        uint32_t off = length;
-        while (off < old) {
-            uint32_t chunk = old - off;
-            if (chunk > sizeof(zeros)) {
-                chunk = sizeof(zeros);
-            }
-            if (fs_write_to_inode(&obj, off, zeros, chunk) < 0) {
-                current->errno = 5;
-                return -1;
-            }
-            off += chunk;
-        }
-        obj.i_size = length;
-        return fs_write_inode(ino, &obj) ? -1 : 0;
-    }
-    if (length > old) {
-        uint8_t zeros[256];
-        memset(zeros, 0, sizeof(zeros));
-        uint32_t off = old;
-        while (off < length) {
-            uint32_t chunk = length - off;
-            if (chunk > sizeof(zeros)) {
-                chunk = sizeof(zeros);
-            }
-            if (fs_write_to_inode(&obj, off, zeros, chunk) < 0) {
-                current->errno = 28;
-                return -1;
-            }
-            off += chunk;
-        }
-        return fs_write_inode(ino, &obj) ? -1 : 0;
+    if (fs_truncate_inode_len(&obj, length)) {
+        current->errno = length > obj.i_size ? 28 : 5;
+        return -1;
     }
     return 0;
 }

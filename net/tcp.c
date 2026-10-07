@@ -138,8 +138,14 @@ static int tcp_rx_room(struct TCP_PCB *pcb) {
 }
 
 static void tcp_rx_put(struct TCP_PCB *pcb, const uint8_t *data, uint32_t len) {
-    for (uint32_t i = 0; i < len; i++)
-        pcb->rx[pcb->rx_tail++ & RCV_MASK] = data[i];
+    uint32_t tail = pcb->rx_tail & RCV_MASK;
+    uint32_t first = TCP_RCV_BUF - tail;
+    if (first > len)
+        first = len;
+    memcpy(pcb->rx + tail, data, first);
+    if (len > first)
+        memcpy(pcb->rx, data + first, len - first);
+    pcb->rx_tail += len;
 }
 
 static void tcp_fire(NETIF *ifp, struct TCP_PCB *pcb) {
@@ -156,7 +162,8 @@ static void tcp_fire(NETIF *ifp, struct TCP_PCB *pcb) {
         if (!seg)
             break;
         const uint8_t *d = pcb->txb + (cursor - pcb->snd_una);
-        tcp_emit(ifp, pcb, cursor, pcb->rcv_nxt, TCP_FLAG_ACK, d, seg);
+        if (tcp_emit(ifp, pcb, cursor, pcb->rcv_nxt, TCP_FLAG_ACK, d, seg) < 0)
+            break;
         cursor += seg;
     }
     if (cursor > pcb->snd_nxt) {

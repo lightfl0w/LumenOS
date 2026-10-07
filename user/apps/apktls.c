@@ -15,11 +15,13 @@
 #define LINUX_SYS_sendto 44
 #define LINUX_SYS_recvfrom 45
 #define LINUX_SYS_clock_gettime 228
+#define LINUX_SYS_open 2
+#define LINUX_SYS_write 1
 #define LINUX_SYS_getrandom 318
 #define LINUX_SYS_poll 7
 
 #define POLLIN 0x001
-#define DNS_TRIES 20
+#define DNS_TRIES 60
 #define DNS_WAIT_MS 500
 
 struct pollfd {
@@ -61,10 +63,10 @@ static void fill_sin(uint8_t *sa, uint32_t ip, uint16_t port) {
     sa[1] = 0;
     sa[2] = (uint8_t)((port >> 8) & 0xFF);
     sa[3] = (uint8_t)(port & 0xFF);
-    sa[4] = (uint8_t)(ip & 0xFF);
-    sa[5] = (uint8_t)((ip >> 8) & 0xFF);
-    sa[6] = (uint8_t)((ip >> 16) & 0xFF);
-    sa[7] = (uint8_t)((ip >> 24) & 0xFF);
+    sa[4] = (uint8_t)((ip >> 24) & 0xFF);
+    sa[5] = (uint8_t)((ip >> 16) & 0xFF);
+    sa[6] = (uint8_t)((ip >> 8) & 0xFF);
+    sa[7] = (uint8_t)(ip & 0xFF);
 }
 
 static int dns_query(const char *host, uint32_t *out_ip) {
@@ -133,8 +135,11 @@ static int dns_query(const char *host, uint32_t *out_ip) {
         pfd.fd = fd;
         pfd.events = POLLIN;
         pfd.revents = 0;
-        if (lsys3(LINUX_SYS_poll, (long)&pfd, 1, DNS_WAIT_MS) <= 0)
+        if (lsys3(LINUX_SYS_poll, (long)&pfd, 1, DNS_WAIT_MS) <= 0) {
+            if (tries != 0 && tries % 4 == 0)
+                lsys(44, fd, (long)q, n, 0, (long)sa, 16);
             continue;
+        }
         if (!(pfd.revents & POLLIN))
             continue;
         len = lsys(45, fd, (long)r, sizeof r, 0, (long)from, (long)&alen);
@@ -307,7 +312,7 @@ int main(void) {
         if (r <= 0)
             break;
         total += r;
-        if (total > 65536)
+        if (total > 60000000)
             break;
     }
     printf("apktls: read %d bytes\n", total);

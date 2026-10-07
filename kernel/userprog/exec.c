@@ -31,10 +31,10 @@ static const char **exec_env_defaults(void) {
 #define EFLAGS_MBS (1 << 1)
 #define EFLAGS_IF_1 (1 << 9)
 #define EFLAGS_IOPL_0 0
-#define MAX_ARG_NR 16
-#define MAX_ARG_STR_LEN 256
+#define MAX_ARG_NR 64
+#define MAX_ARG_STR_LEN 1024
 #define EXEC_STRBUF_HALF (MAX_ARG_NR * MAX_ARG_STR_LEN)
-#define EXEC_STRBUF_PAGES 2
+#define EXEC_STRBUF_PAGES 32
 #define HEAP_ASLR_PAGES 2048
 #define MAX_INTERP_PATH 128
 static void apply_rx(uint32_t base, uint32_t pages) {
@@ -254,15 +254,14 @@ static int32_t probe_image64(int32_t fd, struct LINUX_ELF64_EHDR *ehdr, uint32_t
         if (read_file(fd, &ph, sizeof(ph)) != sizeof(ph)) {
             return -1;
         }
-        if (ph.p_type != PT_LOAD) {
-            continue;
-        }
-        if ((uint32_t)ph.p_vaddr < lo) {
-            lo = (uint32_t)ph.p_vaddr;
-        }
-        e = (uint32_t)(ph.p_vaddr + ph.p_memsz);
-        if (e > hi) {
-            hi = e;
+        if (ph.p_type == PT_LOAD) {
+            if ((uint32_t)ph.p_vaddr < lo) {
+                lo = (uint32_t)ph.p_vaddr;
+            }
+            e = (uint32_t)(ph.p_vaddr + ph.p_memsz);
+            if (e > hi) {
+                hi = e;
+            }
         }
     }
     if (hi <= lo) {
@@ -289,7 +288,7 @@ static int32_t map_image64(int32_t fd, const struct LINUX_ELF64_EHDR *ehdr, uint
             continue;
         }
         va = (uint32_t)ph.p_vaddr;
-        if (bounded && (va < USER_VADDR_START || va >= USER_STACK3_VADDR)) {
+        if (bounded && (va < USER_EXEC64_FLOOR || va >= USER_STACK3_VADDR)) {
             continue;
         }
         map_at = va + bias;
@@ -380,7 +379,7 @@ static int32_t load64(int32_t fd, struct EXEC_IMAGE *img) {
         }
         if (ehdr.e_phoff >= ph.p_offset && ehdr.e_phoff < ph.p_offset + ph.p_filesz &&
             ((is_dyn && ph.p_vaddr < USER_STACK3_VADDR) ||
-             (!is_dyn && ph.p_vaddr >= USER_VADDR_START && ph.p_vaddr < USER_STACK3_VADDR))) {
+             (!is_dyn && ph.p_vaddr >= USER_EXEC64_FLOOR && ph.p_vaddr < USER_STACK3_VADDR))) {
             img->phdr_vaddr = (uint32_t)(ph.p_vaddr + (ehdr.e_phoff - ph.p_offset));
             img->phentsize = ehdr.e_phentsize;
             img->phnum = ehdr.e_phnum;
@@ -400,7 +399,7 @@ static int32_t load64(int32_t fd, struct EXEC_IMAGE *img) {
     }
     if (is_dyn) {
         uint32_t span = max_e - min_v;
-        uint32_t avail = USER_LOW_CEILING - USER_VADDR_START;
+        uint32_t avail = USER_LOW_CEILING - USER_EXEC64_FLOOR;
         uint32_t reserve = span;
         uint32_t off;
         if (min_v > max_e) {
@@ -414,7 +413,7 @@ static int32_t load64(int32_t fd, struct EXEC_IMAGE *img) {
         }
         off = rand_u32() % (avail - reserve);
         off &= ~(PAGE_SIZE - 1);
-        bias = USER_VADDR_START + off;
+        bias = USER_EXEC64_FLOOR + off;
     }
     if (map_image64(fd, &ehdr, bias, !is_dyn, &image_end) != 0) {
         goto out;
@@ -464,7 +463,7 @@ static int32_t load64(int32_t fd, struct EXEC_IMAGE *img) {
             }
         }
     }
-    if (image_end <= USER_VADDR_START || image_end + PAGE_SIZE >= USER_LOW_CEILING) {
+    if (image_end <= USER_EXEC64_FLOOR || image_end + PAGE_SIZE >= USER_LOW_CEILING) {
         goto out;
     }
     img->brk_base = pick_brk_base(image_end);
@@ -505,13 +504,14 @@ static int32_t load32(int32_t fd, struct EXEC_IMAGE *img) {
         }
         if (elf_header.e_phoff >= prog_header.p_offset &&
             elf_header.e_phoff < prog_header.p_offset + prog_header.p_filesz &&
-            prog_header.p_vaddr >= USER_VADDR_START && prog_header.p_vaddr < USER_STACK3_VADDR) {
+            prog_header.p_vaddr >= USER_EXEC64_FLOOR &&
+            prog_header.p_vaddr < USER_STACK3_VADDR) {
             img->phdr_vaddr =
                 (uint32_t)(prog_header.p_vaddr + (elf_header.e_phoff - prog_header.p_offset));
             img->phentsize = elf_header.e_phentsize;
             img->phnum = elf_header.e_phnum;
         }
-        if (prog_header.p_type == PT_LOAD && prog_header.p_vaddr >= USER_VADDR_START &&
+        if (prog_header.p_type == PT_LOAD && prog_header.p_vaddr >= USER_EXEC64_FLOOR &&
             prog_header.p_vaddr < USER_STACK3_VADDR) {
             if (segment_load(fd, prog_header.p_offset, prog_header.p_filesz, prog_header.p_memsz,
                              prog_header.p_vaddr) == -1) {
@@ -534,7 +534,7 @@ static int32_t load32(int32_t fd, struct EXEC_IMAGE *img) {
     }
     img->entry = (int32_t)elf_header.e_entry;
     img->app_entry = img->entry;
-    if (image_end <= USER_VADDR_START || image_end + PAGE_SIZE >= USER_LOW_CEILING) {
+    if (image_end <= USER_EXEC64_FLOOR || image_end + PAGE_SIZE >= USER_LOW_CEILING) {
         return -1;
     }
     img->brk_base = pick_brk_base(image_end);

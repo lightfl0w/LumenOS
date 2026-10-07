@@ -358,6 +358,26 @@ int64_t lc_fchownat(LC_ARGS) {
     int rc = lc_at_path(r, (int32_t)a, b, kpath);
     if (rc != 0)
         return rc;
+    if (f & 0x100u) {
+        struct FS_INODE obj;
+        uint32_t ino_no = 0;
+        int ft = 0;
+        if (fs_lookup_ftype(kpath, &ino_no, &ft, 0)) {
+            current->errno = 2;
+            return -1;
+        }
+        if (fs_read_inode(ino_no, &obj))
+            return -1;
+        if (current->euid != 0) {
+            current->errno = 1;
+            return -1;
+        }
+        if (c != (uint32_t)-1)
+            obj.i_uid = (uint16_t)c;
+        if (d != (uint32_t)-1)
+            obj.i_gid = (uint16_t)d;
+        return fs_write_inode(ino_no, &obj) ? -1 : 0;
+    }
     return sys_chown(kpath, (uint32_t)c, (uint32_t)d);
 }
 int64_t lc_fchmod(LC_ARGS) {
@@ -418,16 +438,17 @@ int32_t compat_readv(int32_t fd, struct LINUX_IOVEC *iov, int32_t iovcnt) {
 }
 
 int32_t compat_ftruncate(int32_t fd, int32_t length) {
-    (void)length;
+    if (length < 0)
+        return -LINUX_EINVAL;
     if (fd < 3 || fd >= (int32_t)MAX_FILES_OPEN_PER_PROC)
         return -LINUX_EINVAL;
     uint32_t gfd = fd_local2global((uint32_t)fd);
     struct FILE *pf = file_get(gfd);
     if (pf == NULL || pf->fd_inode == NULL || is_pipe((uint32_t)fd))
         return -LINUX_EINVAL;
-    fs_truncate_inode(pf->fd_inode);
-    fs_write_inode(pf->fd_inode->i_no, pf->fd_inode);
-    return 0;
+    if ((pf->fd_inode->i_mode & 0xF000u) != 0x8000u)
+        return -LINUX_EINVAL;
+    return fs_truncate_inode_len(pf->fd_inode, (uint32_t)length) ? -LINUX_EIO : 0;
 }
 int32_t compat_flags_linux2native(uint32_t lflags) {
     int32_t nflags = (int32_t)(lflags & 3u);
@@ -871,7 +892,7 @@ int64_t lc_flock(LC_ARGS) {
     uint32_t ino = pf->fd_inode->i_no;
     int32_t pid = (int32_t)current->fd_owner_pid;
     uint32_t op = (uint32_t)b & 0xfu;
-    if (op == 8u) {
+    if (op & 8u) {
         uint32_t fl = asm_save_eflags();
         asm_cli();
         for (uint32_t i = 0; i < FLOCK_TAB_N; i++) {
@@ -881,15 +902,16 @@ int64_t lc_flock(LC_ARGS) {
         asm_restore_eflags(fl);
         return 0;
     }
-    if (op != 1u && op != 2u)
+    uint32_t mode = (op & 2u) ? 2u : (op & 1u) ? 1u : 0u;
+    if (mode == 0u)
         return -LINUX_EINVAL;
     for (;;) {
         uint32_t fl = asm_save_eflags();
         asm_cli();
-        if (!flock_conflict(ino, op, pid)) {
+        if (!flock_conflict(ino, mode, pid)) {
             for (uint32_t i = 0; i < FLOCK_TAB_N; i++) {
                 if (flock_tab[i].mode != 0 && flock_tab[i].ino == ino && flock_tab[i].pid == pid) {
-                    flock_tab[i].mode = op;
+                    flock_tab[i].mode = mode;
                     asm_restore_eflags(fl);
                     return 0;
                 }
@@ -897,7 +919,7 @@ int64_t lc_flock(LC_ARGS) {
             for (uint32_t i = 0; i < FLOCK_TAB_N; i++) {
                 if (flock_tab[i].mode == 0) {
                     flock_tab[i].ino = ino;
-                    flock_tab[i].mode = op;
+                    flock_tab[i].mode = mode;
                     flock_tab[i].pid = pid;
                     asm_restore_eflags(fl);
                     return 0;
@@ -907,7 +929,7 @@ int64_t lc_flock(LC_ARGS) {
             return -LINUX_ENOLCK;
         }
         asm_restore_eflags(fl);
-        if (b & 4u)
+        if (op & 4u)
             return -LINUX_EWOULDBLOCK;
         thread_yield();
     }
@@ -1014,6 +1036,26 @@ int64_t lc_symlinkat(LC_ARGS) {
         return rc;
     return sys_symlink(ktarget, kpath);
 }
+int64_t lc_link(LC_ARGS) {
+    char kold[MAX_PATH_LEN];
+    char knew[MAX_PATH_LEN];
+    if (!copy_user_str(r, kold, a) || !copy_user_str(r, knew, b))
+        return -LINUX_EFAULT;
+    return sys_link(kold, knew);
+}
+#define LINUX_AT_SYMLINK_FOLLOW 0x400
+int64_t lc_linkat(LC_ARGS) {
+    char kold[MAX_PATH_LEN];
+    char knew[MAX_PATH_LEN];
+    int rc = lc_at_path(r, (int32_t)a, b, kold);
+    if (rc != 0)
+        return rc;
+    rc = lc_at_path(r, (int32_t)c, d, knew);
+    if (rc != 0)
+        return rc;
+    int follow = ((int32_t)f & LINUX_AT_SYMLINK_FOLLOW) != 0;
+    return fs_link_path(kold, knew, follow);
+}
 int64_t lc_mknodat(LC_ARGS) {
     char kpath[MAX_PATH_LEN];
     int rc = lc_at_path(r, (int32_t)a, b, kpath);
@@ -1045,7 +1087,11 @@ int64_t lc_readv(LC_ARGS) {
 
 int64_t lc_ftruncate(LC_ARGS) {
     (void)r;
-    return compat_ftruncate((int32_t)a, (int32_t)c);
+    (void)c;
+    (void)d;
+    (void)e;
+    (void)f;
+    return compat_ftruncate((int32_t)a, (int32_t)b);
 }
 
 int64_t lc_pipe(LC_ARGS) {

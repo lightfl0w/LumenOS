@@ -1,7 +1,8 @@
 #include "mm/access.h"
+#include "kernel/userprog/process.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
-#define USER_VADDR_BEGIN 0x8048000u
+#define USER_VADDR_BEGIN USER_EXEC64_FLOOR
 static int user_range_walk(uint32_t addr, uint32_t len, int write);
 int access_ok(const void *addr, size_t n, int write) {
     if (n == 0) {
