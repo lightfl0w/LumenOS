@@ -10,6 +10,8 @@
 #include "drivers/char/serial/console/io.h"
 #include "drivers/char/serial/mouse.h"
 #include "drivers/driver_ops.h"
+#include "kernel/boot/cmdline.h"
+#include "lib/malloc/kmalloc.h"
 #include "drivers/input/keyboard/keyboard.h"
 #include "fs/fs.h"
 #include "kernel/asm_func.h"
@@ -93,24 +95,46 @@ static void show_boot_logo(void) {
     png_image_free(&logo_img);
 }
 
-void drivers_init(int min_level, int max_level) {
-    struct DRIVER_OPS table[16];
-    int n = 0;
-    for (const struct DRIVER_OPS *d = __drivers_start; d != __drivers_end && n < 16; ++d) {
-        if (d->level < min_level || d->level > max_level)
-            continue;
-        int j = n;
-        while (j > 0 && table[j - 1].level > d->level) {
-            table[j] = table[j - 1];
+static void drivers_sort(const struct DRIVER_OPS **arr, int n) {
+    for (int i = 1; i < n; ++i) {
+        const struct DRIVER_OPS *key = arr[i];
+        int j = i - 1;
+        while (j >= 0 && arr[j]->level > key->level) {
+            arr[j + 1] = arr[j];
             --j;
         }
-        table[j] = *d;
-        ++n;
+        arr[j + 1] = key;
     }
+}
+
+void drivers_init(int min_level, int max_level) {
+    size_t count = (size_t)(__drivers_end - __drivers_start);
+    if (count == 0) {
+        return;
+    }
+
+    const struct DRIVER_OPS **table =
+        (const struct DRIVER_OPS **)kmalloc(count * sizeof(*table));
+    if (table == NULL) {
+        kprintf("[drivers] out of memory while collecting drivers\n");
+        return;
+    }
+
+    int n = 0;
+    for (const struct DRIVER_OPS *d = __drivers_start; d != __drivers_end; ++d) {
+        if (d->level < min_level || d->level > max_level)
+            continue;
+        table[n++] = d;
+    }
+
+    drivers_sort(table, n);
+
     for (int i = 0; i < n; ++i) {
-        if (table[i].init)
-            table[i].init();
+        if (table[i]->init)
+            table[i]->init();
     }
+
+    kfree(table);
 }
 
 void kmain(uint32_t magic, void *mbi_ptr, uint32_t kphys) {
@@ -145,14 +169,10 @@ void kmain(uint32_t magic, void *mbi_ptr, uint32_t kphys) {
     };
     gfx_set_fb_format(&fmt);
 
-    if (bi->cmdline != NULL) {
-        for (const char *c = bi->cmdline; *c; c++) {
-            if (c[0] == 'v' && c[1] == 'e' && c[2] == 'r' && c[3] == 'b' && c[4] == 'o' &&
-                c[5] == 's' && c[6] == 'e') {
-                console_set_verbose(1);
-                break;
-            }
-        }
+    cmdline_init(bi->cmdline);
+
+    if (cmdline_has_flag("verbose")) {
+        console_set_verbose(1);
     }
     mb2_dump();
     kprintf_v("[diag] magic=%#x mbi=%#x fb: %dx%d bpp=%d pitch=%d addr=%#x\n", magic,
@@ -187,10 +207,10 @@ void kmain(uint32_t magic, void *mbi_ptr, uint32_t kphys) {
         kprintf("[WARN] apic_init failed, fallback PIC\n");
         pic_init();
     }
-    drivers_init(0, 19);
+    drivers_init(INIT_PHASE_MIN, INIT_PHASE_PRE_THREAD);
     thread_init();
 
-    drivers_init(20, 99);
+    drivers_init(INIT_PHASE_POST_THREAD, INIT_PHASE_MAX);
     filesys_init();
     smp_init();
     if (net_enable)

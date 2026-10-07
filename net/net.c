@@ -19,7 +19,15 @@ NETIF g_netif;
 
 struct SCHED_LOCK net_lock;
 
+int virtio_net_init(NETIF *ifp);
+int virtio_net_tx(NETIF *ifp, const void *frame, uint32_t len);
+int virtio_net_rx(NETIF *ifp, void *buf, uint32_t maxlen);
+
 static void net_probe(NETIF *ifp) {
+    ifp->tx = virtio_net_tx;
+    ifp->rx = virtio_net_rx;
+    if (virtio_net_init(ifp) == 0)
+        return;
     ifp->tx = rtl8139_tx;
     ifp->rx = rtl8139_rx;
     if (rtl8139_init(ifp) == 0)

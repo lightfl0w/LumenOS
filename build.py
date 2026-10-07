@@ -636,6 +636,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         ("interrupt.o",  ARCH_DIR / "irq" / "interrupt.c"),
         ("early.o",      ARCH_DIR / "boot" / "early.c"),
         ("kernel.o",     KERNEL_DIR / "main.c"),
+        ("cmdline.o",    KERNEL_DIR / "boot" / "cmdline.c"),
         ("mb2.o",        ARCH_DIR / "boot" / "mb2.c"),
         ("boot_info.o",  ARCH_DIR / "boot" / "boot_info.c"),
         ("assert.o",     KERNEL_DIR / "panic.c"),
@@ -940,6 +941,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
     net_c_sources = [
         ("rtl8139.o", ROOT / "drivers" / "net" / "rtl8139" / "rtl8139.c"),
         ("e1000.o", ROOT / "drivers" / "net" / "e1000" / "e1000.c"),
+        ("virtio_net.o", ROOT / "drivers" / "net" / "virtio" / "virtio_net.c"),
         ("arp.o", net_dir / "arp.c"),
         ("ip.o", net_dir / "ip.c"),
         ("eth.o", net_dir / "eth.c"),
@@ -1005,7 +1007,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             description="embed logo.png", group="objcopy",
         ))
     kernel_objs_names = [
-        "mb2_entry.o", "entry.o", "kernel.o", "mb2.o", "boot_info.o", "func.o", "ioc.o", "io.o", "idle.o", "acpi.o",
+        "mb2_entry.o", "entry.o", "kernel.o", "cmdline.o", "mb2.o", "boot_info.o", "func.o", "ioc.o", "io.o", "idle.o", "acpi.o",
         "apic.o", "pit.o", "stub.o", "syscall_entry.o", "syscall_arch.o", "syscall_entry_c.o", "arch_paging.o", "idt.o", "interrupt.o", "early.o", "pic.o",
         "assert.o", "ssp.o", "str.o", "kprintf.o", "rand.o", "rbtree.o", "png.o", "ttf.o", "bitmap.o", "pool.o", "access.o", "kheap.o", "list.o",
         "switch.o", "thread.o", "sync.o", "percpu.o", "smp.o",
@@ -1022,7 +1024,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         "theme.o", "font_kernel.o", "wallpaper_kernel.o", "logo_kernel.o", "shm.o", "guiserver.o",
         "wm.o", "wm_anim.o", "wm_bar.o", "guiclients.o", "guiclients_term.o", "guiclients_monitor.o",
                 "guiclients_png.o", "guiclients_files.o", "guiclients_edit.o", "gui.o", "x11.o", "x11_render.o", "x11_window.o", "x11_server.o",
-        "rtl8139.o", "e1000.o", "arp.o", "ip.o", "eth.o", "icmp.o",
+        "rtl8139.o", "e1000.o", "virtio_net.o", "arp.o", "ip.o", "eth.o", "icmp.o",
         "tcp.o", "udp.o", "socket.o", "net.o",
         "sha256.o", "chacha20.o", "aes_gcm.o", "x25519.o", "p256.o", "rsa.o",
         "x509.o", "tls.o", "tls_roots.o", "tls_net.o", "dns.o",
@@ -1035,12 +1037,13 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
     )
     tasks.append(kernel_link_task)
     kernel_bin = BUILD_DIR / "kernel.bin"
-    tasks.append(Task(
+    kernel_bin_task = Task(
         name="kernel.bin",
         cmd=[tools.objcopy, "-O", "binary", str(kernel_elf), str(kernel_bin)],
         out=kernel_bin, deps=[], description="strip ELF → flat binary",
         group="objcopy",
-    ))
+    )
+    tasks.append(kernel_bin_task)
     floppy_img = BUILD_DIR / "floppy.img"
     tasks.append(task_python(
         "floppy.img",
@@ -1051,6 +1054,8 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
          str(floppy_img)],
         out=floppy_img,
     ))
+    uefi_enabled = False
+    uefi_esp = None
     if CONFIG.get("CONFIG_UEFI") == "y":
         uefi_dir = ARCH_DIR / "boot" / "uefi"
         bootx64 = BUILD_DIR / "BOOTX64.EFI"
@@ -1418,6 +1423,20 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             description="compile dyn_hello.elf (clang driver + sysroot, no manual ld)")
         tasks.append(dyn_hello_elf)
     tasks.append(task_config())
+    test_hd_img = BUILD_DIR / "test_hd.img"
+    test_hd_task = task_python(
+        "test_hd.img",
+        TOOLS / "make_ext4.py",
+        [str(BUILD_DIR), str(test_hd_img)],
+        out=test_hd_img,
+    )
+    test_hd_task.deps = [kernel_link_task, kernel_bin_task]
+    if CONFIG.get("CONFIG_UEFI") == "y" and uefi_enabled:
+        test_hd_task.deps.append(uefi_esp)
+    test_hd_task.deps.extend(user_elves)
+    test_hd_task.description = "make_ext4.py → test_hd.img (+nvme.img)"
+    test_hd_task.group = "image"
+    tasks.append(test_hd_task)
     return BuildPlan(tasks=tasks, user_elves=user_elves,
                      musl_enabled=plan_musl_enabled)
 @dataclass
@@ -1483,7 +1502,8 @@ def execute_plan(plan: BuildPlan, tools: Tools, console: Console,
         return f"({seconds/60:.1f}min)"
     def c_dim(s: str) -> str:
         return f"{console._c(Ansi.DIM)}{console._c(Ansi.GRAY)}{s}{console._c(Ansi.RESET)}"
-    total_steps = 13 + (1 if any(t.group == "uefi" for t in plan.tasks) else 0)
+    total_steps = 13 + (1 if any(t.group == "uefi" for t in plan.tasks) else 0) \
+        + (1 if any(t.group == "image" for t in plan.tasks) else 0)
     s = 1
     console.step_header(s, total_steps, "Resolving Kconfig")
     for t in (t for t in plan.tasks if t.name == "kconfig"):
@@ -1620,6 +1640,14 @@ def execute_plan(plan: BuildPlan, tools: Tools, console: Console,
             for i, t in enumerate(uefi_tasks, 1):
                 run_task(t)
                 update(i, t.description)
+    s += 1
+    image_tasks = [t for t in plan.tasks if t.group == "image"]
+    if image_tasks:
+        console.step_header(s, total_steps, "Building disk images")
+        with console.progress(len(image_tasks), "images", Ansi.BR_WHT) as update:
+            for i, t in enumerate(image_tasks, 1):
+                run_task(t)
+                update(i, t.description)
     stats.timings["__total__"] = (time.perf_counter() - overall_t0, "overall")
     return stats
 def show_failure_hint(console: Console, missing: List[str]) -> None:
@@ -1725,10 +1753,9 @@ def do_run(console: Console, stats: BuildStats,
             console.warn(f"{esp} 不存在; 请确认 CONFIG_UEFI=y 且构建成功")
             return
         hd_img = BUILD_DIR / "test_hd.img"
-        mkdisk = TOOLS / "make_ext4.py"
-        if mkdisk.exists():
-            console.info("generating test_hd.img via make_ext4.py")
-            run([sys.executable, str(mkdisk), str(BUILD_DIR), str(hd_img)])
+        if not hd_img.exists():
+            console.warn(f"{hd_img} 不存在; 请先运行构建 (build.py) 生成 test_hd.img")
+            return
         vars_dst = BUILD_DIR / "OVMF_VARS.fd"
         shutil.copyfile(vars_src, vars_dst)
         cmd = [qemu, "-machine", "pc", "-accel", "tcg,tb-size=256", "-m", "1G",
@@ -1760,10 +1787,9 @@ def do_run(console: Console, stats: BuildStats,
         cmd += ["-fda", str(BUILD_DIR / "floppy.img")]
     else:
         hd_img = BUILD_DIR / "test_hd.img"
-        mkdisk = TOOLS / "make_ext4.py"
-        if mkdisk.exists():
-            console.info("generating test_hd.img via make_ext4.py")
-            run([sys.executable, str(mkdisk), str(BUILD_DIR), str(hd_img)])
+        if not hd_img.exists():
+            console.warn(f"{hd_img} 不存在; 请先运行构建 (build.py) 生成 test_hd.img")
+            return
         cmd += ["-hda", str(hd_img)]
     cmd += ["-debugcon", "stdio", "-display", "gtk,zoom-to-fit=off"]
     if not no_net:
