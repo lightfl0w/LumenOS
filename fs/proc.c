@@ -3,7 +3,7 @@
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/vfs/vfs.h"
-#include "kernel/boot_info.h"
+#include "arch/boot_info.h"
 #include "kernel/sched/thread.h"
 #include "kernel/userprog/process.h"
 #include "lib/string/str.h"
@@ -89,7 +89,6 @@ static uint32_t meminfo_build(char *dst, uint32_t cap) {
     uint32_t total_kb = kernel_pool.pool_size / 1024;
     uint32_t free_kb = kernel_pool_free_count() * (PAGE_SIZE / 1024);
     uint32_t used_kb = total_kb > free_kb ? total_kb - free_kb : 0;
-    (void)cap;
     return sprintf(dst,
                    "MemTotal:     %d kB\n"
                    "MemFree:      %d kB\n"
@@ -137,7 +136,6 @@ static uint32_t procstatus_build(char *dst, uint32_t cap, uint32_t slot) {
 static uint32_t procmaps_build(char *dst, uint32_t cap, uint32_t slot) {
     struct TASK *t = &task_table[slot];
     uint32_t n = 0;
-    (void)cap;
     if (t->user_brk > t->brk_base) {
         n += sprintf(dst + n, "%x-%x rw-p 00000000 00:00 0 [heap]\n", t->brk_base, t->user_brk);
     }
@@ -364,17 +362,10 @@ static struct DISK_PARTITION *proc_vfs_partition(void) {
 }
 
 static int proc_vfs_lookup(const char *path, uint32_t *ino, int *is_dir) {
-    (void)path;
-    (void)ino;
-    (void)is_dir;
     return -1;
 }
 
 static int proc_vfs_lookup_ftype(const char *path, uint32_t *ino, int *ftype, int follow) {
-    (void)path;
-    (void)ino;
-    (void)ftype;
-    (void)follow;
     return -1;
 }
 
@@ -392,83 +383,51 @@ static int proc_vfs_abs_path(const char *path, char *out, uint32_t cap) {
 }
 
 static int proc_vfs_read_link_target(uint32_t ino, char *buf, uint32_t cap) {
-    (void)ino;
-    (void)buf;
-    (void)cap;
     return -1;
 }
 
 static int proc_vfs_read_inode(uint32_t ino, struct FS_INODE *out) {
-    (void)ino;
-    (void)out;
     return -1;
 }
 
 static int proc_vfs_read_from_inode(const struct FS_INODE *ino, uint32_t off, void *buf,
                                     uint32_t count) {
-    (void)ino;
-    (void)off;
-    (void)buf;
-    (void)count;
     return 0;
 }
 
 static int proc_vfs_dir_next(const struct FS_INODE *dino, uint32_t *pos, struct FS_DIRENT *out) {
-    (void)dino;
-    (void)pos;
-    (void)out;
     return 0;
 }
 
 static int proc_vfs_new_inode(uint32_t mode, struct FS_INODE *out) {
-    (void)mode;
-    (void)out;
     return -1;
 }
 
 static void proc_vfs_free_inode(uint32_t ino) {
-    (void)ino;
 }
 
 static int proc_vfs_write_inode(uint32_t ino, const struct FS_INODE *in) {
-    (void)ino;
-    (void)in;
     return -1;
 }
 
 static int proc_vfs_write_to_inode(struct FS_INODE *ino, uint32_t off, const void *buf,
                                    uint32_t count) {
-    (void)ino;
-    (void)off;
-    (void)buf;
-    (void)count;
     return -1;
 }
 
 static void proc_vfs_truncate_inode(struct FS_INODE *ino) {
-    (void)ino;
 }
 
 static int proc_vfs_add_entry(struct FS_INODE *dino, uint32_t ino, const char *name, int is_dir) {
-    (void)dino;
-    (void)ino;
-    (void)name;
-    (void)is_dir;
     return -1;
 }
 
 static int proc_vfs_add_entry_dt(struct FS_INODE *dino, uint32_t ino, const char *name,
                                  uint8_t dtype) {
-    (void)dino;
-    (void)ino;
-    (void)name;
-    (void)dtype;
     return -1;
 }
 
 static int proc_vfs_remove_entry(struct FS_INODE *dino, const char *name) {
-    (void)dino;
-    (void)name;
     return -1;
 }
 

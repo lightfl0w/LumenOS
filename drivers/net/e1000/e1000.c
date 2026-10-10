@@ -1,7 +1,7 @@
 #include "drivers/net/e1000/e1000.h"
 
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 #include "net/netif.h"
@@ -153,7 +153,6 @@ static int e1000_tx_wait(volatile uint8_t *status) {
 }
 
 int e1000_tx(NETIF *ifp, const void *frame, uint32_t len) {
-    (void)ifp;
     uint32_t slot = s_tx_cur % TX_DESC_N;
     if (!e1000_tx_wait(&s_tx[slot].status))
         return -1;
@@ -171,7 +170,6 @@ int e1000_tx(NETIF *ifp, const void *frame, uint32_t len) {
 }
 
 int e1000_rx(NETIF *ifp, void *buf, uint32_t maxlen) {
-    (void)ifp;
     if (!(s_rx[s_rx_cur].status & 0x01))
         return 0;
     uint32_t got = 0;

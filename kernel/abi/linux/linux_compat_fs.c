@@ -12,14 +12,14 @@
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
 #include "kernel/abi/linux/linux_compat.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "kernel/syscall/file_syscall.h"
 #include "kernel/syscall/futex.h"
 #include "kernel/syscall/mmap.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/clone.h"
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/fork.h"
@@ -75,7 +75,7 @@ int compat_fd_isdir(int32_t fd) {
 static int at_dir_inode(int32_t fd, uint32_t *out) {
     if (!compat_fd_isdir(fd))
         return -LINUX_EBADF;
-    struct FILE *pf = file_get(fd_local2global((uint32_t)fd));
+    struct FILE *pf = lc_file_from_fd(fd);
     if (pf == NULL || pf->fd_inode == NULL)
         return -LINUX_EBADF;
     *out = pf->fd_inode->i_no;
@@ -151,7 +151,7 @@ int compat_fd_is_tty(int32_t fd) {
         return 1;
     if (fd < 0)
         return 0;
-    struct FILE *f = file_get(fd_local2global((uint32_t)fd));
+    struct FILE *f = lc_file_from_fd(fd);
     return f != NULL && f->fd_inode != NULL && fs_is_chardev(f->fd_inode) &&
            (fs_chardev_dev(f->fd_inode) >> 8) == 5u;
 }
@@ -159,7 +159,6 @@ void compat_tcgets(uint8_t *p) {
     TTY.ioctl(TTY_IOCTL_TCGETS, (uint64_t)(uintptr_t)p);
 }
 int32_t compat_tcsets(uint32_t cmd, uint64_t arg) {
-    (void)cmd;
     if (!arg || !access_ok((const void *)(uintptr_t)arg, 60, 0))
         return -LINUX_EFAULT;
     TTY.ioctl(TTY_IOCTL_TCSETS, arg);
@@ -176,7 +175,7 @@ int32_t compat_ioctl(int32_t fd, uint32_t cmd, uint64_t arg) {
         return rc == 0 ? 0 : -LINUX_EBADF;
     }
     if (fd >= 0 && fd < MAX_FILES_OPEN_PER_PROC) {
-        struct FILE *pf = file_get(fd_local2global((uint32_t)fd));
+        struct FILE *pf = lc_file_from_fd(fd);
         if (pf != NULL && pf->dev_priv != NULL)
             return pty_chardev_ioctl(pf, cmd, arg);
     }
@@ -277,9 +276,6 @@ static int lc_target_mounted(const char *path, const char **type_out) {
 }
 
 int64_t lc_mount(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     char ksrc[MAX_PATH_LEN];
     char kdst[MAX_PATH_LEN];
     const char *src = 0;
@@ -303,10 +299,6 @@ int64_t lc_mount(LC_ARGS) {
 }
 
 int64_t lc_umount2(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     char kdst[MAX_PATH_LEN];
     if (!copy_user_str(r, kdst, a))
         return -LINUX_EFAULT;
@@ -318,7 +310,6 @@ int64_t lc_umount2(LC_ARGS) {
     return -LINUX_EBUSY;
 }
 int64_t lc_fstatfs(LC_ARGS) {
-    (void)a;
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_STATFS), 1))
         return -LINUX_EFAULT;
     return compat_statfs_fill(b);
@@ -334,10 +325,6 @@ int64_t lc_lchown(LC_ARGS) {
     return lc_chown(r, a, b, c, d, e, f);
 }
 int64_t lc_fchown(LC_ARGS) {
-    (void)r;
-    (void)d;
-    (void)e;
-    (void)f;
     if (a < 3 || a >= MAX_FILES_OPEN_PER_PROC)
         return -LINUX_EBADF;
     uint32_t gfd = fd_local2global((uint32_t)a);
@@ -381,11 +368,6 @@ int64_t lc_fchownat(LC_ARGS) {
     return sys_chown(kpath, (uint32_t)c, (uint32_t)d);
 }
 int64_t lc_fchmod(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (a < 3 || a >= MAX_FILES_OPEN_PER_PROC)
         return -LINUX_EBADF;
     uint32_t gfd = fd_local2global((uint32_t)a);
@@ -399,7 +381,6 @@ int64_t lc_fchmod(LC_ARGS) {
     return fs_write_inode(pf->fd_inode->i_no, pf->fd_inode) ? -LINUX_EIO : 0;
 }
 int64_t lc_fchmodat(LC_ARGS) {
-    (void)d;
     char kpath[MAX_PATH_LEN];
     int rc = lc_at_path(r, (int32_t)a, b, kpath);
     if (rc != 0)
@@ -407,7 +388,6 @@ int64_t lc_fchmodat(LC_ARGS) {
     return sys_chmod(kpath, (uint32_t)c);
 }
 int64_t lc_close(LC_ARGS) {
-    (void)r;
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
         unix_close_slot(uslot);
@@ -559,7 +539,7 @@ int32_t compat_write(int32_t fd, const void *buf, uint32_t count) {
     if (fd < 0)
         return -1;
     if (fd < MAX_FILES_OPEN_PER_PROC) {
-        struct FILE *pf = file_get(fd_local2global((uint32_t)fd));
+        struct FILE *pf = lc_file_from_fd(fd);
         if (pf != NULL && pf->dev_priv != NULL)
             return (int32_t)pty_chardev_write(pf, buf, count);
     }
@@ -579,7 +559,7 @@ int32_t compat_write(int32_t fd, const void *buf, uint32_t count) {
         return -LINUX_EISDIR;
     if (io_is_file_fd(fd)) {
         if (is_pipe(fd)) {
-            struct FILE *pf2 = file_get(fd_local2global((uint32_t)fd));
+            struct FILE *pf2 = lc_file_from_fd(fd);
             uint32_t n;
             if (pf2 == NULL || pf2->fd_inode == NULL)
                 return -LINUX_EBADF;
@@ -606,7 +586,7 @@ int32_t compat_write(int32_t fd, const void *buf, uint32_t count) {
 }
 int32_t compat_read(int32_t fd, void *buf, uint32_t count) {
     if (fd >= 0 && fd < MAX_FILES_OPEN_PER_PROC) {
-        struct FILE *pf = file_get(fd_local2global((uint32_t)fd));
+        struct FILE *pf = lc_file_from_fd(fd);
         if (pf != NULL && pf->dev_priv != NULL)
             return (int32_t)pty_chardev_read(pf, buf, count);
     }
@@ -629,7 +609,7 @@ int32_t compat_read(int32_t fd, void *buf, uint32_t count) {
         if (compat_fd_isdir(fd))
             return -LINUX_EISDIR;
         if (is_pipe(fd)) {
-            struct FILE *pf3 = file_get(fd_local2global((uint32_t)fd));
+            struct FILE *pf3 = lc_file_from_fd(fd);
             uint32_t len;
             if (pf3 == NULL || pf3->fd_inode == NULL)
                 return -LINUX_EBADF;
@@ -675,17 +655,11 @@ int32_t sys_compat_writev(int32_t fd, struct LINUX_IOVEC *iov, int32_t iovcnt) {
 }
 
 int64_t lc_write(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (!user_ptr_ok(r, b, (uint32_t)c, 0))
         return -LINUX_EFAULT;
     return compat_write((int32_t)a, (const void *)b, (uint32_t)c);
 }
 int64_t lc_read(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (!user_ptr_ok(r, b, (uint32_t)c, 1))
         return -LINUX_EFAULT;
     return compat_read((int32_t)a, (void *)b, (uint32_t)c);
@@ -803,9 +777,6 @@ int64_t lc_copy_file_range(LC_ARGS) {
 }
 
 int64_t lc_writev(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (!user_ptr_ok(r, b, (uint32_t)c * 8u, 0))
         return -LINUX_EFAULT;
     return sys_compat_writev((int32_t)a, (struct LINUX_IOVEC *)b, (int32_t)c);
@@ -848,11 +819,9 @@ int64_t lc_lstat(LC_ARGS) {
     return compat_stat_linux(kpath, b, 0);
 }
 int64_t lc_lseek(LC_ARGS) {
-    (void)r;
     return sys_lseek((int32_t)a, (int32_t)b, (uint8_t)(c + 1u));
 }
 int64_t lc_fcntl(LC_ARGS) {
-    (void)r;
     return sys_fcntl((int32_t)a, (int32_t)b, c);
 }
 #define FLOCK_TAB_N 16
@@ -880,11 +849,6 @@ void flock_release_ino(uint32_t ino) {
     asm_restore_eflags(fl);
 }
 int64_t lc_flock(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     uint32_t gfd = fd_local2global((uint32_t)a);
     struct FILE *pf = file_get(gfd);
     if (pf == NULL || pf->fd_inode == NULL)
@@ -1076,7 +1040,6 @@ int64_t lc_getdents64(LC_ARGS) {
     return compat_getdents64((int32_t)a, (void *)(uintptr_t)b, (uint32_t)c);
 }
 int64_t lc_ioctl(LC_ARGS) {
-    (void)r;
     return compat_ioctl((int32_t)a, (uint32_t)b, c);
 }
 int64_t lc_readv(LC_ARGS) {
@@ -1086,11 +1049,6 @@ int64_t lc_readv(LC_ARGS) {
 }
 
 int64_t lc_ftruncate(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     return compat_ftruncate((int32_t)a, (int32_t)b);
 }
 
@@ -1100,10 +1058,6 @@ int64_t lc_pipe(LC_ARGS) {
     return sys_pipe((int32_t *)(uintptr_t)a);
 }
 int64_t lc_pipe2(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     uint32_t flags = (uint32_t)b;
     if ((flags & ~(LINUX_O_CLOEXEC | LINUX_O_NONBLOCK)) != 0)
         return -LINUX_EINVAL;
@@ -1130,11 +1084,9 @@ int64_t lc_pipe2(LC_ARGS) {
     return 0;
 }
 int64_t lc_dup(LC_ARGS) {
-    (void)r;
     return sys_dup((int32_t)a);
 }
 int64_t lc_dup2(LC_ARGS) {
-    (void)r;
     return sys_dup2((int32_t)a, (int32_t)b);
 }
 int64_t lc_dup3(LC_ARGS) {
@@ -1274,7 +1226,7 @@ int64_t lc_utimensat(LC_ARGS) {
     if (b == 0 || *(const char *)(uintptr_t)b == 0) {
         if (a < 0 || a >= MAX_FILES_OPEN_PER_PROC)
             return -LINUX_EBADF;
-        struct FILE *pf = file_get(fd_local2global((uint32_t)a));
+        struct FILE *pf = lc_file_from_fd(a);
         if (pf == NULL || pf->fd_inode == NULL)
             return -LINUX_EBADF;
         ino = pf->fd_inode->i_no;
@@ -1307,12 +1259,6 @@ int64_t lc0_open(LC_ARGS) {
 }
 
 int64_t lc_fsync(LC_ARGS) {
-    (void)r;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return 0;
     if (evfd_slot((int)a) >= 0 || tfd_slot((int)a) >= 0 || ep_slot((int)a) >= 0)
@@ -1326,10 +1272,6 @@ int64_t lc_fsync(LC_ARGS) {
     return 0;
 }
 int64_t lc_truncate(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     char kpath[MAX_PATH_LEN];
     if (!copy_user_str(r, kpath, a))
         return -LINUX_EFAULT;
@@ -1338,11 +1280,6 @@ int64_t lc_truncate(LC_ARGS) {
     return sys_truncate(kpath, (int32_t)b);
 }
 int64_t lc_fchdir(LC_ARGS) {
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     char kpath[MAX_PATH_LEN];
     if (a < 3 || a >= MAX_FILES_OPEN_PER_PROC)
         return -LINUX_EBADF;

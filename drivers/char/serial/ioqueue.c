@@ -1,6 +1,6 @@
 #include "drivers/char/serial/ioqueue.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/sync/sync.h"
 void ioq_init(struct TTY_IOQUEUE *ioq) {
     lock_init(&ioq->lock);

@@ -1,9 +1,9 @@
 #include "lib/malloc/kmalloc.h"
-#include "drivers/char/serial/console/io.h"
-#include "kernel/assert.h"
-#include "kernel/sync/sync.h"
+#include "lib/assert.h"
+#include "lib/memdef.h"
+#include "lib/printf/printf.h"
+#include "lib/sync/spin.h"
 #include "lib/string/str.h"
-#include "mm/pool.h"
 
 #define HEAP_ALIGN ((size_t)16)
 #define HEAP_ALIGN_LOG2 4u
@@ -23,7 +23,7 @@
 static struct MM_HEAP kheap_ctl;
 static struct MM_HEAP_AREA kheap_areas[KHEAP_MAX_AREAS];
 static uint32_t kheap_area_count;
-static struct SCHED_LOCK kheap_lock;
+static struct LIB_SPINLOCK kheap_lock;
 static uint32_t kheap_used_bytes;
 static uint32_t kheap_peak_bytes;
 static uint32_t kheap_alloc_count;
@@ -85,41 +85,68 @@ static void freelist_remove(struct MM_HEAP_BLOCK *b) {
     map_insert(block_total(b), &fl, &sl);
     struct MM_HEAP_FREE_LINK *l = free_link(b);
     if (l->prev != NULL) {
+
         free_link(l->prev)->next = l->next;
-    } else {
-        kheap_ctl.blocks[fl][sl] = l->next;
-        if (l->next == NULL) {
-            kheap_ctl.sl_bitmap[fl] &= ~(1u << sl);
-            if (kheap_ctl.sl_bitmap[fl] == 0) {
-                kheap_ctl.fl_bitmap &= ~(1u << fl);
-            }
+        if (l->next != NULL) {
+            free_link(l->next)->prev = l->prev;
         }
+        return;
+    }
+
+    kheap_ctl.blocks[fl][sl] = l->next;
+    if (l->next == NULL) {
+        kheap_ctl.sl_bitmap[fl] &= ~(1u << sl);
+    }
+    if (kheap_ctl.sl_bitmap[fl] == 0) {
+        kheap_ctl.fl_bitmap &= ~(1u << fl);
     }
     if (l->next != NULL) {
         free_link(l->next)->prev = l->prev;
     }
 }
 
+static struct MM_HEAP_BLOCK *list_first_fit(struct MM_HEAP_BLOCK *b, size_t total) {
+    for (; b != NULL; b = free_link(b)->next) {
+        if (block_total(b) >= total) {
+            return b;
+        }
+    }
+    return NULL;
+}
+
+static struct MM_HEAP_BLOCK *slot_take(int fl, int sl, size_t total, int exact_slot) {
+    struct MM_HEAP_BLOCK *b = kheap_ctl.blocks[fl][sl];
+    if (!exact_slot) {
+        freelist_remove(b);
+        return b;
+    }
+    struct MM_HEAP_BLOCK *fit = list_first_fit(b, total);
+    if (fit == NULL) {
+        return NULL;
+    }
+    freelist_remove(fit);
+    return fit;
+}
+
+static struct MM_HEAP_BLOCK *row_scan(int fl, int sl0, size_t total, int first_row) {
+    uint32_t sl_map = kheap_ctl.sl_bitmap[fl] & (~0u << sl0);
+    while (sl_map != 0) {
+        int sl = __builtin_ffs((int)sl_map) - 1;
+        struct MM_HEAP_BLOCK *b = slot_take(fl, sl, total, first_row && sl == sl0);
+        if (b != NULL) {
+            return b;
+        }
+        if (first_row && sl == sl0) {
+            sl_map &= ~(1u << sl);
+        }
+    }
+    return NULL;
+}
+
 static struct MM_HEAP_BLOCK *list_take(int fl0, int sl0, size_t total) {
     for (int fl = fl0; fl < (int)HEAP_FL_COUNT; sl0 = 0, fl++) {
-        uint32_t sl_map = kheap_ctl.sl_bitmap[fl] & (~0u << sl0);
-        while (sl_map != 0) {
-            int sl = __builtin_ffs((int)sl_map) - 1;
-            struct MM_HEAP_BLOCK *b = kheap_ctl.blocks[fl][sl];
-            if (fl == fl0 && sl == sl0) {
-                struct MM_HEAP_BLOCK *fit;
-                for (fit = b; fit != NULL; fit = free_link(fit)->next) {
-                    if (block_total(fit) >= total) {
-                        break;
-                    }
-                }
-                if (fit == NULL) {
-                    sl_map &= ~(1u << sl);
-                    continue;
-                }
-                b = fit;
-            }
-            freelist_remove(b);
+        struct MM_HEAP_BLOCK *b = row_scan(fl, sl0, total, fl == fl0);
+        if (b != NULL) {
             return b;
         }
     }
@@ -256,12 +283,12 @@ static void stats_gain(struct MM_HEAP_BLOCK *b) {
 }
 
 void *kmalloc(size_t size) {
-    lock_acquire(&kheap_lock);
+    lib_spin_acquire(&kheap_lock);
     void *p = heap_alloc(size);
     if (p != NULL) {
         stats_gain(block_from(p));
     }
-    lock_release(&kheap_lock);
+    lib_spin_release(&kheap_lock);
     return p;
 }
 
@@ -290,7 +317,7 @@ void *kmalloc_aligned(size_t size, size_t align) {
     if ((align & (align - 1)) != 0) {
         return NULL;
     }
-    lock_acquire(&kheap_lock);
+    lib_spin_acquire(&kheap_lock);
     void *p = NULL;
     if (align == HEAP_ALIGN) {
         p = heap_alloc(size);
@@ -321,7 +348,7 @@ void *kmalloc_aligned(size_t size, size_t align) {
     if (p != NULL) {
         stats_gain(block_from(p));
     }
-    lock_release(&kheap_lock);
+    lib_spin_release(&kheap_lock);
     return p;
 }
 
@@ -329,24 +356,64 @@ void kfree(void *ptr) {
     if (ptr == NULL) {
         return;
     }
-    lock_acquire(&kheap_lock);
+    lib_spin_acquire(&kheap_lock);
     struct MM_HEAP_BLOCK *b = block_from(ptr);
     if (!block_own(ptr, b)) {
         block_bad("free wild pointer", ptr);
         ASSERT(!"kfree: wild pointer");
-        lock_release(&kheap_lock);
+        lib_spin_release(&kheap_lock);
         return;
     }
     if (b->size & HEAP_FREE) {
         block_bad("double free", ptr);
         ASSERT(!"kfree: double free");
-        lock_release(&kheap_lock);
+        lib_spin_release(&kheap_lock);
         return;
     }
     kheap_used_bytes -= (uint32_t)block_total(b);
     kheap_alloc_count--;
     block_release(b);
-    lock_release(&kheap_lock);
+    lib_spin_release(&kheap_lock);
+}
+
+static int realloc_shrink(struct MM_HEAP_BLOCK *b, size_t need) {
+    block_trim_used(b, need);
+    return 0;
+}
+
+static int realloc_grow_in_place(struct MM_HEAP_BLOCK *b, size_t need, size_t old_total) {
+    struct MM_HEAP_BLOCK *n = block_next(b);
+    size_t grown = old_total + block_total(n);
+    if (!(n->size & HEAP_FREE) || grown - HEAP_HDR < need) {
+        return -1;
+    }
+    freelist_remove(n);
+    b->size = grown | (b->size & HEAP_PREV_FREE);
+    struct MM_HEAP_BLOCK *m = block_next(b);
+    m->prev = b;
+    m->size &= ~HEAP_PREV_FREE;
+    block_trim_used(b, need);
+    return 0;
+}
+
+static void *realloc_move(void *src, struct MM_HEAP_BLOCK *b, size_t size,
+                          size_t old_total) {
+    void *np = heap_alloc(size);
+    if (np == NULL) {
+        return NULL;
+    }
+    size_t copy = old_total - HEAP_HDR < size ? old_total - HEAP_HDR : size;
+    memcpy(np, src, copy);
+    block_release(b);
+    return np;
+}
+
+static void realloc_account(size_t old_total, void *np) {
+    uint32_t now = (uint32_t)block_total(block_from(np));
+    kheap_used_bytes = kheap_used_bytes + now - (uint32_t)old_total;
+    if (kheap_used_bytes > kheap_peak_bytes) {
+        kheap_peak_bytes = kheap_used_bytes;
+    }
 }
 
 void *krealloc(void *ptr, size_t size) {
@@ -357,50 +424,31 @@ void *krealloc(void *ptr, size_t size) {
         kfree(ptr);
         return NULL;
     }
-    lock_acquire(&kheap_lock);
+    lib_spin_acquire(&kheap_lock);
     struct MM_HEAP_BLOCK *b = block_from(ptr);
     if (!block_own(ptr, b) || (b->size & HEAP_FREE)) {
         block_bad("realloc invalid block", ptr);
         ASSERT(!"krealloc: invalid block");
-        lock_release(&kheap_lock);
+        lib_spin_release(&kheap_lock);
         return NULL;
     }
     size_t need = (size + HEAP_ALIGN - 1) & ~(HEAP_ALIGN - 1);
     size_t old_total = block_total(b);
     void *np = ptr;
     if (need <= old_total - HEAP_HDR) {
-        block_trim_used(b, need);
-    } else {
-        struct MM_HEAP_BLOCK *n = block_next(b);
-        size_t grown = old_total + block_total(n);
-        if ((n->size & HEAP_FREE) && grown - HEAP_HDR >= need) {
-            freelist_remove(n);
-            b->size = grown | (b->size & HEAP_PREV_FREE);
-            struct MM_HEAP_BLOCK *m = block_next(b);
-            m->prev = b;
-            m->size &= ~HEAP_PREV_FREE;
-            block_trim_used(b, need);
-        } else {
-            np = heap_alloc(size);
-            if (np != NULL) {
-                memcpy(np, ptr, old_total - HEAP_HDR < size ? old_total - HEAP_HDR : size);
-                block_release(b);
-            }
-        }
+        realloc_shrink(b, need);
+    } else if (realloc_grow_in_place(b, need, old_total) != 0) {
+        np = realloc_move(ptr, b, size, old_total);
     }
     if (np != NULL) {
-        uint32_t now = (uint32_t)block_total(block_from(np));
-        kheap_used_bytes = kheap_used_bytes + now - (uint32_t)old_total;
-        if (kheap_used_bytes > kheap_peak_bytes) {
-            kheap_peak_bytes = kheap_used_bytes;
-        }
+        realloc_account(old_total, np);
     }
-    lock_release(&kheap_lock);
+    lib_spin_release(&kheap_lock);
     return np;
 }
 
 void kheap_stats(struct KHEAP_STATS *out) {
-    lock_acquire(&kheap_lock);
+    lib_spin_acquire(&kheap_lock);
     out->area_count = kheap_area_count;
     out->used_bytes = kheap_used_bytes;
     out->peak_bytes = kheap_peak_bytes;
@@ -410,13 +458,13 @@ void kheap_stats(struct KHEAP_STATS *out) {
         bytes += (uint32_t)kheap_areas[i].bytes;
     }
     out->area_bytes = bytes;
-    lock_release(&kheap_lock);
+    lib_spin_release(&kheap_lock);
 }
 
 void kheap_init(void) {
     ASSERT(sizeof(struct MM_HEAP_BLOCK) == 16);
     ASSERT(HEAP_MIN_BLOCK >= 2 * sizeof(void *) + HEAP_HDR);
-    lock_init(&kheap_lock);
+    lib_spin_init(&kheap_lock);
     memset(&kheap_ctl, 0, sizeof(kheap_ctl));
     kheap_area_count = 0;
     kheap_used_bytes = 0;
@@ -456,68 +504,92 @@ static int kst_check(void *p, size_t n, uint8_t tag) {
     return memcmp(p, kst_pat, n > sizeof(kst_pat) ? sizeof(kst_pat) : n) == 0;
 }
 
-static int kheap_audit(void) {
-    for (uint32_t i = 0; i < kheap_area_count; i++) {
-        struct MM_HEAP_BLOCK *b = (struct MM_HEAP_BLOCK *)kheap_areas[i].mem;
-        uintptr_t hi = (uintptr_t)kheap_areas[i].mem + kheap_areas[i].bytes;
-        struct MM_HEAP_BLOCK *prev = NULL;
-        size_t sum = 0;
-        while ((uintptr_t)b < hi) {
-            size_t total = block_total(b);
-            if (prev == NULL) {
-                if (b->prev != NULL || (b->size & HEAP_PREV_FREE)) {
-                    kprintf("[kheap] audit: area %u head flags bad\n", i);
-                    return -1;
-                }
-            } else {
-                if (b->prev != prev || !!(b->size & HEAP_PREV_FREE) != !!(prev->size & HEAP_FREE)) {
-                    kprintf("[kheap] audit: area %u prev link bad at %#x\n", i,
-                            (uint32_t)(uintptr_t)b);
-                    return -1;
-                }
-            }
-            if (total != 0 && (total < HEAP_MIN_BLOCK || (total & (HEAP_ALIGN - 1)) != 0)) {
-                kprintf("[kheap] audit: area %u block size bad %#x\n", i, (uint32_t)total);
-                return -1;
-            }
-            if (b->size & HEAP_FREE) {
-                int fl, sl;
-                map_insert(total, &fl, &sl);
-                struct MM_HEAP_BLOCK *it = kheap_ctl.blocks[fl][sl];
-                int found = 0;
-                while (it != NULL) {
-                    struct MM_HEAP_FREE_LINK *l = free_link(it);
-                    if (l->prev != NULL && free_link(l->prev)->next != it) {
-                        kprintf("[kheap] audit: list prev broken at %#x\n",
-                                (uint32_t)(uintptr_t)it);
-                        return -1;
-                    }
-                    if (it == b) {
-                        found = 1;
-                        break;
-                    }
-                    it = l->next;
-                }
-                if (!found) {
-                    kprintf("[kheap] audit: free block %#x missing from list\n",
-                            (uint32_t)(uintptr_t)b);
-                    return -1;
-                }
-            }
-            sum += total;
-            prev = b;
-            if (total == 0) {
-                break;
-            }
-            b = block_next(b);
-        }
-        if (prev == NULL || block_total(prev) != 0 || (uintptr_t)prev != hi - HEAP_HDR) {
-            kprintf("[kheap] audit: area %u sentinel bad\n", i);
+static int audit_head(struct MM_HEAP_BLOCK *b) {
+    if (b->prev != NULL || (b->size & HEAP_PREV_FREE)) {
+        return -1;
+    }
+    return 0;
+}
+
+static int audit_prev_link(struct MM_HEAP_BLOCK *b, struct MM_HEAP_BLOCK *prev,
+                           uint32_t area) {
+    if (b->prev == prev && !!(b->size & HEAP_PREV_FREE) == !!(prev->size & HEAP_FREE)) {
+        return 0;
+    }
+    kprintf("[kheap] audit: area %u prev link bad at %#x\n", area, (uint32_t)(uintptr_t)b);
+    return -1;
+}
+
+static int audit_block_size(size_t total, uint32_t area) {
+    if (total == 0 || (total >= HEAP_MIN_BLOCK && (total & (HEAP_ALIGN - 1)) == 0)) {
+        return 0;
+    }
+    kprintf("[kheap] audit: area %u block size bad %#x\n", area, (uint32_t)total);
+    return -1;
+}
+
+static int audit_free_list_member(struct MM_HEAP_BLOCK *b, size_t total) {
+    int fl, sl;
+    map_insert(total, &fl, &sl);
+    for (struct MM_HEAP_BLOCK *it = kheap_ctl.blocks[fl][sl]; it != NULL;
+         it = free_link(it)->next) {
+        struct MM_HEAP_FREE_LINK *l = free_link(it);
+        if (l->prev != NULL && free_link(l->prev)->next != it) {
+            kprintf("[kheap] audit: list prev broken at %#x\n", (uint32_t)(uintptr_t)it);
             return -1;
         }
-        if (sum != kheap_areas[i].bytes - HEAP_HDR) {
-            kprintf("[kheap] audit: area %u size sum %u != %u\n", i, (uint32_t)sum,
-                    (uint32_t)(kheap_areas[i].bytes - HEAP_HDR));
+        if (it == b) {
+            return 0;
+        }
+    }
+    kprintf("[kheap] audit: free block %#x missing from list\n", (uint32_t)(uintptr_t)b);
+    return -1;
+}
+
+static int audit_area(uint32_t i, size_t *sum_out) {
+    struct MM_HEAP_BLOCK *b = (struct MM_HEAP_BLOCK *)kheap_areas[i].mem;
+    uintptr_t hi = (uintptr_t)kheap_areas[i].mem + kheap_areas[i].bytes;
+    struct MM_HEAP_BLOCK *prev = NULL;
+    size_t sum = 0;
+    while ((uintptr_t)b < hi) {
+        size_t total = block_total(b);
+        if (prev == NULL && audit_head(b) != 0) {
+            kprintf("[kheap] audit: area %u head flags bad\n", i);
+            return -1;
+        }
+        if (prev != NULL && audit_prev_link(b, prev, i) != 0) {
+            return -1;
+        }
+        if (audit_block_size(total, i) != 0) {
+            return -1;
+        }
+        if ((b->size & HEAP_FREE) && audit_free_list_member(b, total) != 0) {
+            return -1;
+        }
+        sum += total;
+        prev = b;
+        if (total == 0) {
+            break;
+        }
+        b = block_next(b);
+    }
+    if (prev == NULL || block_total(prev) != 0 || (uintptr_t)prev != hi - HEAP_HDR) {
+        kprintf("[kheap] audit: area %u sentinel bad\n", i);
+        return -1;
+    }
+    if (sum != kheap_areas[i].bytes - HEAP_HDR) {
+        kprintf("[kheap] audit: area %u size sum %u != %u\n", i, (uint32_t)sum,
+                (uint32_t)(kheap_areas[i].bytes - HEAP_HDR));
+        return -1;
+    }
+    *sum_out = sum;
+    return 0;
+}
+
+static int kheap_audit(void) {
+    for (uint32_t i = 0; i < kheap_area_count; i++) {
+        size_t sum = 0;
+        if (audit_area(i, &sum) != 0) {
             return -1;
         }
     }

@@ -2,6 +2,16 @@
 
 > LumenOS 是一个 x86_64 长模式操作系统内核
 
+## 快速上手
+
+```bash
+python3 build.py            # 构建内核
+python3 build.py run        # 构建并在 QEMU 中启动
+python3 build.py smoke      # 无头启动回归（跑到 fish shell 才算过）
+```
+
+**第一次接触本仓库，请读 [docs/DEVELOPING.md](docs/DEVELOPING.md)** —— 内核启动顺序、分层规则、以及「加驱动/加文件系统/加系统调用」分别要改哪几个地方。
+
 ## 第三方模块
 
 `third_party/` 下以 git submodule 形式引入第三方代码，构建时从源码编译，不重新分发任何二进制产物。版权归各自上游作者所有：

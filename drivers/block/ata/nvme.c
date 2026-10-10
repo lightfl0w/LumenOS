@@ -3,7 +3,7 @@
 #include "drivers/bus/pci/pci.h"
 #include "drivers/char/serial/console/io.h"
 #include "drivers/driver_ops.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 #include "user/libc/stdio.h"

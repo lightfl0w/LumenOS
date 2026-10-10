@@ -3,8 +3,8 @@
 #include "arch/x86_64/cpu/gdt.h"
 #include "arch/x86_64/irq/apic.h"
 #include "arch/x86_64/syscall/init.h"
-#include "kernel/asm/stub.h"
-#include "kernel/asm_func.h"
+#include "arch/asm/stub.h"
+#include "arch/asm_func.h"
 
 struct IDT_ENTRY idt[256];
 

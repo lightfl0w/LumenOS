@@ -2,8 +2,9 @@
 #include "drivers/char/serial/console/io.h"
 #include "drivers/char/serial/tty.h"
 #include "drivers/driver_ops.h"
+#include "arch/x86_64/irq.h"
 
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
 
 #define KEYBOARD_DATA 0x60
@@ -158,3 +159,8 @@ void keyboard_handler(void) {
         ioq_putchar(&keyboard_ioq, c);
     }
 }
+
+static void keyboard_handler_irq(uint8_t vector) {
+    keyboard_handler();
+}
+IRQ_REGISTER(IRQ_KEYBOARD, keyboard_handler_irq, "keyboard");

@@ -1,8 +1,8 @@
 #include "arch/x86_64/cpu/tss.h"
 
 #include "arch/x86_64/cpu/gdt.h"
-#include "kernel/asm_func.h"
-#include "kernel/sched/percpu.h"
+#include "arch/asm_func.h"
+#include "arch/percpu.h"
 #include "kernel/sched/thread.h"
 #include "mm/pool.h"
 

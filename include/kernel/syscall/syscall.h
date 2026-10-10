@@ -1,7 +1,7 @@
 #ifndef SYSCALL_H
 #define SYSCALL_H
 
-#include "kernel/asm/stub.h"
+#include "arch/asm/stub.h"
 #include "uapi/syscall_nr.h"
 #include <stdint.h>
 

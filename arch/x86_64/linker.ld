@@ -37,6 +37,22 @@ SECTIONS
         __drivers_start = .;
         KEEP(*(.drivers))
         __drivers_end = .;
+
+        __irq_handlers_start = .;
+        KEEP(*(.irq_handlers))
+        __irq_handlers_end = .;
+
+        __vfs_fs_start = .;
+        KEEP(*(.vfs_fs))
+        __vfs_fs_end = .;
+
+        __net_ethproto_start = .;
+        KEEP(*(.net_ethproto))
+        __net_ethproto_end = .;
+
+        __net_ipproto_start = .;
+        KEEP(*(.net_ipproto))
+        __net_ipproto_end = .;
     }
 
     .data ALIGN(64) : AT(ADDR(.data) - _kernel_virt_base)

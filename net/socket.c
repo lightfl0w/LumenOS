@@ -1,8 +1,8 @@
 #include "net/socket.h"
 
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 #include "net/net.h"
 #include "net/tcp.h"
@@ -181,7 +181,6 @@ int net_socket(int domain, int type, int proto) {
         return -1;
     if (flags & ~0x80800u)
         return -1;
-    (void)proto;
     lock_acquire(&net_lock);
     struct SOCKET *s = sock_alloc();
     if (!s) {
@@ -211,24 +210,26 @@ int net_socket(int domain, int type, int proto) {
     return (int)(s - s_sock) + NET_FD_BASE;
 }
 
+static int net_port_in_use(uint16_t port) {
+    for (int i = 0; i < MAX_SOCKET; i++) {
+        if (!s_sock[i].active)
+            continue;
+        uint16_t lp = (s_sock[i].type == SOCK_DGRAM) ? s_sock[i].upcb->local_port
+                                                     : s_sock[i].pcb->local_port;
+        if (lp == port) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static uint16_t net_alloc_port(void) {
     static uint16_t next_port = 49152;
     for (int attempt = 0; attempt < 16384; attempt++) {
         uint16_t cand = next_port++;
         if (next_port < 49152)
             next_port = 49152;
-        int used = 0;
-        for (int i = 0; i < MAX_SOCKET; i++) {
-            if (!s_sock[i].active)
-                continue;
-            uint16_t lp = (s_sock[i].type == SOCK_DGRAM) ? s_sock[i].upcb->local_port
-                                                         : s_sock[i].pcb->local_port;
-            if (lp == cand) {
-                used = 1;
-                break;
-            }
-        }
-        if (!used)
+        if (!net_port_in_use(cand))
             return cand;
     }
     return 0;
@@ -254,7 +255,6 @@ int net_bind(int fd, uint32_t ip, uint16_t port) {
 }
 
 int net_listen(int fd, int backlog) {
-    (void)backlog;
     lock_acquire(&net_lock);
     struct SOCKET *s = sock_get(fd);
     if (s == NULL) {
@@ -623,8 +623,6 @@ int net_getsockopt(int fd, int level, int optname, void *val, uint32_t *len) {
 }
 
 int net_setsockopt(int fd, int level, int optname, const void *val, uint32_t len) {
-    (void)val;
-    (void)len;
     if (!net_is_socket(fd))
         return -EBADF;
     if (level != SOL_SOCKET)

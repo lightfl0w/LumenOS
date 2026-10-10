@@ -2,10 +2,10 @@
 #include "arch/cpu.h"
 #include "arch/mmu.h"
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
-#include "kernel/boot_info.h"
-#include "kernel/sched/percpu.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
+#include "arch/boot_info.h"
+#include "arch/percpu.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
 #include "kernel/userprog/process.h"
@@ -122,7 +122,6 @@ static uint32_t pool_bitmap_free_bits(const struct MM_BITMAP *btmp) {
     return n;
 }
 static void mm_mark_table_page(uint64_t phys, uint64_t bytes, void *ctx) {
-    (void)ctx;
     mark_used((uint32_t)phys, (uint32_t)bytes);
 }
 
@@ -371,23 +370,33 @@ uint64_t *pte_ptr(uint32_t vaddr) {
     uint64_t *pte = arch_pte_lookup(arch_current_pgd(), (uint64_t)vaddr);
     return pte ? pte : &pte_zero;
 }
+
+static void walk_levels(uint64_t pml4_phys, uint32_t vaddr, uint64_t *out) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    uint64_t *pml4 = (uint64_t *)VIRT_OF(pml4_phys);
+    uint64_t e = pml4[X86_PML4_INDEX(vaddr)];
+    out[0] = e;
+    if (!(e & 1)) {
+        return;
+    }
+    e = ((uint64_t *)VIRT_OF(X86_PTE_PHYS(e)))[X86_PT_INDEX(vaddr)];
+    out[1] = e;
+    if (!(e & 1)) {
+        return;
+    }
+    e = ((uint64_t *)VIRT_OF(X86_PTE_PHYS(e)))[X86_PD_INDEX(vaddr)];
+    out[2] = e;
+    if (!(e & 1) || (e & (1ull << 7))) {
+        return;
+    }
+    out[3] = ((uint64_t *)VIRT_OF(X86_PTE_PHYS(e)))[X86_PT_INDEX(vaddr)];
+}
+
 void page_table_dump(uint32_t vaddr) {
     uint64_t pml4_phys = arch_current_pgd();
-    uint64_t *pml4 = (uint64_t *)VIRT_OF(pml4_phys);
-    uint64_t e0 = pml4[X86_PML4_INDEX(vaddr)];
-    uint64_t e1 = 0, e2 = 0, e3 = 0;
-    if (e0 & 1) {
-        uint64_t *pdp = (uint64_t *)VIRT_OF(X86_PTE_PHYS(e0));
-        e1 = pdp[X86_PT_INDEX(vaddr)];
-        if (e1 & 1) {
-            uint64_t *pd = (uint64_t *)VIRT_OF(X86_PTE_PHYS(e1));
-            e2 = pd[X86_PD_INDEX(vaddr)];
-            if ((e2 & 1) && !(e2 & (1ull << 7))) {
-                uint64_t *pt = (uint64_t *)VIRT_OF(X86_PTE_PHYS(e2));
-                e3 = pt[X86_PT_INDEX(vaddr)];
-            }
-        }
-    }
+    uint64_t lv[4];
+    walk_levels(pml4_phys, vaddr, lv);
+    uint64_t e0 = lv[0], e1 = lv[1], e2 = lv[2], e3 = lv[3];
     kprintf_v("  [pgtbl] nx_usable=%d efer=0x%x\n", g_nx_usable, (uint32_t)arch_read_efer());
     kprintf_v("  [pgtbl] cr3=0x%x vaddr=0x%x\n", (uint32_t)pml4_phys, vaddr);
     kprintf_v("  [pgtbl] PML4[%d]=%x%x\n", (int)X86_PML4_INDEX(vaddr), (uint32_t)(e0 >> 32),
@@ -403,23 +412,10 @@ void page_table_dump(uint32_t vaddr) {
               (int)((e3 >> 7) & 1), (int)((e3 >> 8) & 1), (int)((e3 >> 63) & 1),
               (uint32_t)(e3 & 0x000ffffffffff000ull));
     if (pml4_phys != kernel_pml4) {
-        uint64_t *kpml4 = (uint64_t *)VIRT_OF(kernel_pml4);
-        uint64_t ke0 = kpml4[X86_PML4_INDEX(vaddr)];
-        uint64_t ke1 = 0, ke2 = 0, ke3 = 0;
-        if (ke0 & 1) {
-            uint64_t *kpdp = (uint64_t *)VIRT_OF(X86_PTE_PHYS(ke0));
-            ke1 = kpdp[X86_PT_INDEX(vaddr)];
-            if (ke1 & 1) {
-                uint64_t *kpd = (uint64_t *)VIRT_OF(X86_PTE_PHYS(ke1));
-                ke2 = kpd[X86_PD_INDEX(vaddr)];
-                if ((ke2 & 1) && !(ke2 & (1ull << 7))) {
-                    uint64_t *kpt = (uint64_t *)VIRT_OF(X86_PTE_PHYS(ke2));
-                    ke3 = kpt[X86_PT_INDEX(vaddr)];
-                }
-            }
-        }
+        uint64_t klv[4];
+        walk_levels(kernel_pml4, vaddr, klv);
         kprintf_v("  [pgtbl] kernel PML4=%x: L1=%x L2=%x L3=%x L4=%x\n", (uint32_t)kernel_pml4,
-                  (uint32_t)ke0, (uint32_t)ke1, (uint32_t)ke2, (uint32_t)ke3);
+                  (uint32_t)klv[0], (uint32_t)klv[1], (uint32_t)klv[2], (uint32_t)klv[3]);
     }
 }
 static int page_table_add_raw(uint32_t vaddr, uint32_t phy_addr) {

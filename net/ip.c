@@ -20,9 +20,8 @@ struct IP_PEND {
 
 static struct IP_PEND s_pend[IP_PEND_MAX];
 
-uint16_t ip_csum(const void *data, uint32_t len) {
+uint32_t net_csum_add(uint32_t sum, const void *data, uint32_t len) {
     const uint8_t *p = (const uint8_t *)data;
-    uint32_t sum = 0;
     uint32_t n = len;
     while (n > 1) {
         sum += ((uint16_t)p[0] << 8) | p[1];
@@ -31,9 +30,17 @@ uint16_t ip_csum(const void *data, uint32_t len) {
     }
     if (n)
         sum += (uint16_t)p[0] << 8;
+    return sum;
+}
+
+uint16_t net_csum_fold(uint32_t sum) {
     while (sum >> 16)
         sum = (uint16_t)sum + (sum >> 16);
     return (uint16_t)~sum;
+}
+
+uint16_t ip_csum(const void *data, uint32_t len) {
+    return net_csum_fold(net_csum_add(0, data, len));
 }
 
 void ip_input(NETIF *ifp, const uint8_t *pkt, uint32_t len) {
@@ -62,12 +69,12 @@ void ip_input(NETIF *ifp, const uint8_t *pkt, uint32_t len) {
         nt_raw("ipfrag", net_be32(pkt + 12), net_be16(pkt + 6));
     uint8_t proto = pkt[9];
     uint32_t plen = len - ihlen;
-    if (proto == IPPROTO_ICMP)
-        icmp_input(ifp, net_be32(pkt + 12), pkt + ihlen, plen);
-    else if (proto == IPPROTO_TCP)
-        tcp_input(ifp, net_be32(pkt + 12), pkt + ihlen, plen);
-    else if (proto == IPPROTO_UDP)
-        udp_input(ifp, net_be32(pkt + 12), pkt + ihlen, plen);
+    for (const struct IP_PROTO *r = __net_ipproto_start; r < __net_ipproto_end; r++) {
+        if (r->proto == proto) {
+            r->input(ifp, net_be32(pkt + 12), pkt + ihlen, plen);
+            return;
+        }
+    }
 }
 
 static struct IP_PEND *ip_pend_slot(uint32_t nh) {
@@ -125,3 +132,5 @@ void ip_arp_resolved(NETIF *ifp, uint32_t ip, const uint8_t *mac) {
     }
     lock_release(&net_lock);
 }
+
+ETH_PROTO_REGISTER(ETH_IP, ip_input, "ip");

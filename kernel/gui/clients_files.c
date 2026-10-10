@@ -127,7 +127,6 @@ static void files_render(struct COMP_DEMO_CLIENT *dc) {
 
 static void files_on_key(struct COMP_DEMO_CLIENT *dc, int sc, int mods) {
     struct FILES_STATE *fs = (struct FILES_STATE *)dc;
-    (void)mods;
     int vis = files_visible(dc);
     if (sc == KBD_SC_UP && fs->sel > 0)
         fs->sel--;
@@ -158,7 +157,6 @@ static const struct CLIENT_DESC files_desc = {"files", "files", files_render, fi
                                               1000000};
 
 void clients_files_thread(void *arg) {
-    (void)arg;
     struct FILES_STATE fs;
     memset(&fs, 0, sizeof(fs));
     s_copy(fs.cwd, "/", MAX_PATH_LEN);

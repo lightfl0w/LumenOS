@@ -1,6 +1,6 @@
 #include "arch/x86_64/cpu/gdt.h"
-#include "kernel/asm_func.h"
-#include "kernel/sched/percpu.h"
+#include "arch/asm_func.h"
+#include "arch/percpu.h"
 
 struct GDT_DESC gdt[GDT_ENTRIES];
 struct GDT_REG {
@@ -8,7 +8,7 @@ struct GDT_REG {
     uint64_t base;
 } __attribute__((packed)) gdtr0;
 
-static void desc_init(struct GDT_DESC *d, uint64_t base, uint32_t limit, uint8_t attr_low,
+void desc_init(struct GDT_DESC *d, uint64_t base, uint32_t limit, uint8_t attr_low,
                       uint8_t attr_high) {
     d->limit_low = limit & 0xFFFF;
     d->base_low = base & 0xFFFF;

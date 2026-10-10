@@ -3,7 +3,7 @@
 #include "drivers/block/ata/block.h"
 #include "fs/fs.h"
 #include "fs/vfs/vfs.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 

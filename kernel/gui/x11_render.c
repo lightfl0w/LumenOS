@@ -117,7 +117,6 @@ int16_t clo16(int v) {
 }
 
 void h_open_font(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t fid = rd32(p + 4);
     if (fid & 0x3)
         return post_error(c, X11_ERR_Value, X11_REQ_OpenFont, 0, fid);
@@ -126,15 +125,12 @@ void h_open_font(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_query_text_extents(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)p;
-    (void)len;
     uint8_t head[32];
     reply_init(c, X11_REQ_QueryTextExtents, 0, head);
     head[1] = 0;
     reply_finish(c, head, 0, 0);
 }
 void h_create_pixmap(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t pid = rd32(p + 4);
     uint32_t w = rd16(p + 12), h = rd16(p + 14);
     if (pix_idx(c, pid) >= 0)
@@ -160,10 +156,8 @@ void h_create_pixmap(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     c->pix[slot].depth = p[1];
     c->pix[slot].data = mem;
     c->pix[slot].size = bytes;
-    (void)pid_next;
 }
 void h_free_pixmap(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t pid = rd32(p + 4);
     int i = pix_idx(c, pid);
     if (i < 0)
@@ -208,7 +202,6 @@ void h_create_gc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
         else if ((1u << bit) == X11_GC_LineWidth)
             c->gc[slot].line_width = val;
     }
-    (void)gid_next;
 }
 void h_change_gc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     if (len < 12)
@@ -234,7 +227,6 @@ void h_change_gc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     }
 }
 void h_free_gc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t gid = rd32(p + 4);
     int i = gc_idx(c, gid);
     if (i < 0)
@@ -242,7 +234,6 @@ void h_free_gc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     c->gc[i].used = 0;
 }
 void h_clear_area(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int wi = win_idx(c, wid);
     if (wi < 0)
@@ -274,7 +265,6 @@ void h_clear_area(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, wid);
 }
 void h_copy_area(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     struct X11_DRAW src = draw_get(c, rd32(p + 4));
     struct X11_DRAW dst = draw_get(c, rd32(p + 8));
     if (!src.ok)
@@ -295,7 +285,6 @@ int gc_fg(struct X11_CONN *c, uint32_t gid, gfx_color *out) {
     return 0;
 }
 void h_poly_point(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -349,7 +338,6 @@ void draw_line(struct GFX_CANVAS *cv, int x0, int y0, int x1, int y1, gfx_color 
     }
 }
 void h_poly_line(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -376,7 +364,6 @@ void h_poly_line(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, did);
 }
 void h_poly_segment(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -395,7 +382,6 @@ void h_poly_segment(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, did);
 }
 void h_poly_rectangle(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -413,7 +399,6 @@ void h_poly_rectangle(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, did);
 }
 void h_poly_fill_rect(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -431,7 +416,6 @@ void h_poly_fill_rect(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, did);
 }
 void h_poly_arc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -463,7 +447,6 @@ void h_poly_arc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, did);
 }
 void h_poly_fill_arc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -484,7 +467,6 @@ void h_poly_fill_arc(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     draw_commit(c, did);
 }
 void h_fill_poly(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     struct X11_DRAW d = draw_get(c, did);
     if (!d.ok)
@@ -605,7 +587,6 @@ void h_get_image(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     }
 }
 void h_alloc_color(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint16_t r = rd16(p + 8), g = rd16(p + 10), b = rd16(p + 12);
     uint32_t pixel = ((uint32_t)(r >> 8) << 16) | ((uint32_t)(g >> 8) << 8) | (uint32_t)(b >> 8);
     uint8_t head[32];
@@ -618,7 +599,6 @@ void h_alloc_color(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_alloc_named_color(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint16_t nl = rd16(p + 8);
     char name[24];
     int n = nl < 23 ? nl : 23;
@@ -651,7 +631,6 @@ void h_alloc_named_color(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_query_colors(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t n = len >= 12 ? (len - 8) / 4 : 0;
     if (n > 3)
         n = 3;
@@ -667,7 +646,6 @@ void h_query_colors(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_lookup_color(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint16_t nl = rd16(p + 8);
     char name[24];
     int n = nl < 23 ? nl : 23;

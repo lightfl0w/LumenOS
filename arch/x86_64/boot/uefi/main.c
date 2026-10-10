@@ -191,34 +191,41 @@ static EFI_STATUS kernel_parse(struct EFI_FILE_PROTOCOL **file_out, uint64_t *en
     }
     return EFI_SUCCESS;
 }
+
+static EFI_STATUS copy_seg(struct EFI_FILE_PROTOCOL *file, uint64_t off, uint8_t *dst,
+                           uint64_t len) {
+    if (file->set_position(file, off) != EFI_SUCCESS) {
+        fail("elf-seek");
+        return EFI_LOAD_ERROR;
+    }
+    uint64_t left = len;
+    while (left > 0) {
+        uint64_t chunk = left;
+        if (file->read(file, &chunk, dst + (len - left)) != EFI_SUCCESS) {
+            fail("elf-read");
+            return EFI_LOAD_ERROR;
+        }
+        if (chunk == 0) {
+            fail("elf-short");
+            return EFI_LOAD_ERROR;
+        }
+        left -= chunk;
+    }
+    return EFI_SUCCESS;
+}
+
 static EFI_STATUS kernel_copy(struct EFI_FILE_PROTOCOL *file, uint64_t delta) {
     uint32_t i;
     for (i = 0; i < uefi_phnum; i++) {
         const struct EFI_ELF64_PHDR *ph = &uefi_phdrs[i];
         uint8_t *dst;
-        uint64_t left;
         if (ph->p_type != EFI_PT_LOAD || ph->p_memsz == 0)
             continue;
         dst = (uint8_t *)(uintptr_t)(ph->p_paddr + delta);
-        if (ph->p_filesz > 0) {
-            if (file->set_position(file, ph->p_offset) != EFI_SUCCESS) {
-                fail("elf-seek");
-                return EFI_LOAD_ERROR;
-            }
-            left = ph->p_filesz;
-            while (left > 0) {
-                uint64_t chunk = left;
-                if (file->read(file, &chunk, dst + (ph->p_filesz - left)) != EFI_SUCCESS) {
-                    fail("elf-read");
-                    return EFI_LOAD_ERROR;
-                }
-                if (chunk == 0) {
-                    fail("elf-short");
-                    return EFI_LOAD_ERROR;
-                }
-                left -= chunk;
-            }
+        if (ph->p_filesz > 0 && copy_seg(file, ph->p_offset, dst, ph->p_filesz) != EFI_SUCCESS) {
+            return EFI_LOAD_ERROR;
         }
+
         if (ph->p_memsz > ph->p_filesz)
             memset(dst + ph->p_filesz, 0, ph->p_memsz - ph->p_filesz);
     }
@@ -386,6 +393,20 @@ static void mmap_append(uint32_t type, uint64_t base, uint64_t len) {
     uefi_mmap_merged[uefi_mmap_count].zero = 0;
     uefi_mmap_count++;
 }
+
+static void note_available(uint64_t *low_top, uint64_t *high_top, uint64_t base, uint64_t len) {
+    uint64_t end = base + len;
+    if (base < UEFI_MEM_LOWER_LIMIT) {
+        uint64_t capped = end < UEFI_MEM_LOWER_LIMIT ? end : UEFI_MEM_LOWER_LIMIT;
+        if (capped > *low_top) {
+            *low_top = capped;
+        }
+    }
+    if (end > *high_top) {
+        *high_top = end;
+    }
+}
+
 static void refresh_mmap(void) {
     uint64_t count = uefi_mmap.size / uefi_mmap.desc_size;
     uint64_t low_top = 0;
@@ -410,14 +431,7 @@ static void refresh_mmap(void) {
             if ((pass == 0) != available)
                 continue;
             if (available) {
-                uint64_t end = base + len;
-                if (base < UEFI_MEM_LOWER_LIMIT) {
-                    uint64_t capped = end < UEFI_MEM_LOWER_LIMIT ? end : UEFI_MEM_LOWER_LIMIT;
-                    if (capped > low_top)
-                        low_top = capped;
-                }
-                if (end > high_top)
-                    high_top = end;
+                note_available(&low_top, &high_top, base, len);
             }
             mmap_append(type, base, len);
         }

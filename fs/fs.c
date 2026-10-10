@@ -32,7 +32,7 @@ char *path_parse(char *pathname, char *name_store) {
     uint32_t cnt = 0;
     if (pathname[0] == '/') {
         while (*(++pathname) == '/')
-            ;
+;
     }
     while (*pathname != '/' && *pathname != 0 && cnt < MAX_FILE_NAME_LEN - 1) {
         *name_store++ = *pathname++;
@@ -874,19 +874,22 @@ struct FS_DIR *sys_opendir(const char *name) {
     return dir;
 }
 
-int32_t sys_closedir(struct FS_DIR *dir) {
-    int32_t ret = -1;
-    if (dir != NULL && open_dir_registered(dir)) {
-        for (int i = 0; i < OPEN_DIR_MAX; i++) {
-            if (open_dir_table[i] == dir) {
-                open_dir_table[i] = NULL;
-                break;
-            }
+static void open_dir_forget(struct FS_DIR *dir) {
+    for (int i = 0; i < OPEN_DIR_MAX; i++) {
+        if (open_dir_table[i] == dir) {
+            open_dir_table[i] = NULL;
+            return;
         }
-        dir_close(dir);
-        ret = 0;
     }
-    return ret;
+}
+
+int32_t sys_closedir(struct FS_DIR *dir) {
+    if (dir == NULL || !open_dir_registered(dir)) {
+        return -1;
+    }
+    open_dir_forget(dir);
+    dir_close(dir);
+    return 0;
 }
 
 struct FS_DIRENT *sys_readdir(struct FS_DIR *dir) {

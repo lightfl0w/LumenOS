@@ -8,4 +8,7 @@ typedef void (*printf_putc_fn)(void *ctx, char c);
 
 void kvprintf_cb(printf_putc_fn out, void *ctx, const char *fmt, va_list ap);
 
+void kprintf(const char *fmt, ...);
+void kprintf_v(const char *fmt, ...);
+
 #endif

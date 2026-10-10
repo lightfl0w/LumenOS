@@ -289,7 +289,6 @@ static int send_setup_reply(struct X11_CONN *c) {
     uint32_t add = vpad + 8 + 40 + 8 + 24;
     uint8_t buf[256];
     memset(buf, 0, sizeof(buf));
-    uint32_t o = 8;
     buf[0] = 1;
     wr16(buf + 2, X11_PROTO_MAJOR);
     wr16(buf + 4, X11_PROTO_MINOR);
@@ -312,7 +311,6 @@ static int send_setup_reply(struct X11_CONN *c) {
     pad8[1] = 32;
     pad8[2] = 8;
     pad8[3] = 255;
-    (void)o;
     uint8_t out[256];
     memset(out, 0, sizeof(out));
     memcpy(out, buf, 8);

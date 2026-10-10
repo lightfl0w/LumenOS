@@ -12,14 +12,14 @@
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
 #include "kernel/abi/linux/linux_compat.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "kernel/syscall/file_syscall.h"
 #include "kernel/syscall/futex.h"
 #include "kernel/syscall/mmap.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/clone.h"
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/fork.h"
@@ -124,10 +124,6 @@ int32_t unix_recv(int idx, void *buf, uint32_t len) {
     return (int32_t)unix_buf_read(idx, (uint8_t *)buf, len);
 }
 int64_t lc_socket(LC_ARGS) {
-    (void)r;
-    (void)d;
-    (void)e;
-    (void)f;
     int domain = (int)a;
     int type = (int)b;
     if (domain == 1) {
@@ -194,9 +190,6 @@ int fill_sockaddr_in(struct ARCH_REGS *r, uint64_t addr, uint64_t addrlen_ptr, u
     return 0;
 }
 int64_t lc_connect(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return -LINUX_ENOENT;
     uint32_t ip;
@@ -206,9 +199,6 @@ int64_t lc_connect(LC_ARGS) {
     return net_connect((int)a, ip, port);
 }
 int64_t lc_bind(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return 0;
     uint32_t ip;
@@ -218,22 +208,11 @@ int64_t lc_bind(LC_ARGS) {
     return net_bind((int)a, ip, port);
 }
 int64_t lc_listen(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return 0;
     return net_listen((int)a, (int)b);
 }
 int64_t lc_accept(LC_ARGS) {
-    (void)r;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return -LINUX_EAGAIN;
     return net_accept((int)a);
@@ -247,17 +226,11 @@ int64_t lc_accept4(LC_ARGS) {
     return nfd;
 }
 int64_t lc_shutdown(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return 0;
     return net_shutdown((int)a, (int)b);
 }
 int64_t lc_sendto(LC_ARGS) {
-    (void)d;
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
         if (!user_ptr_ok(r, b, (uint32_t)c, 0))
@@ -276,7 +249,6 @@ int64_t lc_sendto(LC_ARGS) {
     return net_send((int)a, (const void *)(uintptr_t)b, (uint32_t)c);
 }
 int64_t lc_recvfrom(LC_ARGS) {
-    (void)d;
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
         if (!user_ptr_ok(r, b, (uint32_t)c, 1))
@@ -295,9 +267,6 @@ int64_t lc_recvfrom(LC_ARGS) {
     return n;
 }
 int64_t lc_getsockname(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return -LINUX_EINVAL;
     uint32_t ip = 0;
@@ -309,9 +278,6 @@ int64_t lc_getsockname(LC_ARGS) {
     return 0;
 }
 int64_t lc_getpeername(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return -LINUX_ENOTCONN;
     uint32_t ip = 0;
@@ -323,7 +289,6 @@ int64_t lc_getpeername(LC_ARGS) {
     return 0;
 }
 int64_t lc_setsockopt(LC_ARGS) {
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return 0;
 
@@ -332,7 +297,6 @@ int64_t lc_setsockopt(LC_ARGS) {
     return net_setsockopt((int)a, (int)b, (int)c, (const void *)(uintptr_t)d, (uint32_t)e);
 }
 int64_t lc_getsockopt(LC_ARGS) {
-    (void)f;
     uint32_t klen = 0;
     uint32_t kval = 0;
     if (e != 0 && copy_from_user(&klen, (const void *)(uintptr_t)e, sizeof(klen)) != 0)
@@ -358,10 +322,6 @@ int64_t lc_getsockopt(LC_ARGS) {
     return 0;
 }
 int64_t lc_sendmsg(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return -LINUX_ENOTCONN;
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 0))
@@ -397,10 +357,6 @@ int64_t lc_sendmsg(LC_ARGS) {
     return net_send((int)a, sbuf, total);
 }
 int64_t lc_recvmsg(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (unix_fd_slot(a) >= 0)
         return -LINUX_ENOTCONN;
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 1))
@@ -446,9 +402,6 @@ int64_t lc_recvmsg(LC_ARGS) {
     return (int64_t)copied;
 }
 int64_t lc_socketpair(LC_ARGS) {
-    (void)c;
-    (void)e;
-    (void)f;
     if (a != 1)
         return -LINUX_EAFNOSUPPORT;
     if (b != 1 && b != 2)
@@ -623,7 +576,7 @@ int io_fd_events(int fd, int want_read, int want_write) {
     }
     if (io_is_file_fd(fd)) {
         if (is_pipe(fd)) {
-            struct FILE *f = file_get(fd_local2global((uint32_t)fd));
+            struct FILE *f = lc_file_from_fd(fd);
             if (f != NULL && f->fd_inode != NULL) {
                 uint32_t len = ioq_length((struct TTY_IOQUEUE *)f->fd_inode);
                 if (f->fd_flag == PIPE_RD_FLAG) {
@@ -710,15 +663,9 @@ int64_t lc_timespec_to_ms(struct ARCH_REGS *r, uint64_t ptr, int64_t *out) {
     return 0;
 }
 int64_t lc_poll(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     return lc_poll_common(r, a, (int32_t)b, (int32_t)c);
 }
 int64_t lc_ppoll(LC_ARGS) {
-    (void)d;
-    (void)e;
-    (void)f;
     int64_t tmo = -1;
     int64_t rc = lc_timespec_to_ms(r, c, &tmo);
     if (rc != 0)
@@ -813,7 +760,6 @@ int64_t lc_select_common(struct ARCH_REGS *r, int32_t nfds, uint64_t rd, uint64_
     return rc;
 }
 int64_t lc_select(LC_ARGS) {
-    (void)f;
     int64_t timeout_ms = -1;
     if (e != 0) {
         struct LINUX_TIMEVAL tv;
@@ -827,7 +773,6 @@ int64_t lc_select(LC_ARGS) {
     return lc_select_common(r, (int32_t)a, b, c, d, timeout_ms);
 }
 int64_t lc_pselect6(LC_ARGS) {
-    (void)f;
     int64_t timeout_ms = -1;
     int64_t rc = lc_timespec_to_ms(r, e, &timeout_ms);
     if (rc != 0)
@@ -835,13 +780,6 @@ int64_t lc_pselect6(LC_ARGS) {
     return lc_select_common(r, (int32_t)a, b, c, d, timeout_ms);
 }
 int64_t lc_epoll_create1(LC_ARGS) {
-    (void)r;
-    (void)a;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     for (int i = 0; i < EPFD_MAX; i++) {
         if (u_ep[i].active)
             continue;
@@ -852,8 +790,6 @@ int64_t lc_epoll_create1(LC_ARGS) {
     return -LINUX_ENFILE;
 }
 int64_t lc_epoll_ctl(LC_ARGS) {
-    (void)e;
-    (void)f;
     int ep = ep_slot((int)a);
     if (ep < 0)
         return -LINUX_EBADF;
@@ -934,21 +870,12 @@ int64_t lc_epoll_wait_common(struct ARCH_REGS *r, uint64_t a, uint64_t b, uint64
     }
 }
 int64_t lc_epoll_wait(LC_ARGS) {
-    (void)e;
-    (void)f;
     return lc_epoll_wait_common(r, a, b, c, (int32_t)d);
 }
 int64_t lc_epoll_pwait(LC_ARGS) {
-    (void)e;
-    (void)f;
     return lc_epoll_wait_common(r, a, b, c, (int32_t)d);
 }
 int64_t lc_eventfd2(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     for (int i = 0; i < EVFD_MAX; i++) {
         if (u_evfd[i].active)
             continue;
@@ -962,19 +889,9 @@ int64_t lc_eventfd2(LC_ARGS) {
     return -LINUX_ENFILE;
 }
 int64_t lc_eventfd(LC_ARGS) {
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     return lc_eventfd2(r, a, 0, 0, 0, 0, 0);
 }
 int64_t lc_timerfd_create(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     for (int i = 0; i < TFD_MAX; i++) {
         if (u_tfd[i].active)
             continue;
@@ -987,8 +904,6 @@ int64_t lc_timerfd_create(LC_ARGS) {
     return -LINUX_ENFILE;
 }
 int64_t lc_timerfd_settime(LC_ARGS) {
-    (void)e;
-    (void)f;
     int i = tfd_slot((int)a);
     if (i < 0)
         return -LINUX_EBADF;
@@ -1027,10 +942,6 @@ int64_t lc_timerfd_settime(LC_ARGS) {
     return 0;
 }
 int64_t lc_timerfd_gettime(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     int i = tfd_slot((int)a);
     if (i < 0)
         return -LINUX_EBADF;

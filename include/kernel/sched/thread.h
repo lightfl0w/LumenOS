@@ -1,6 +1,6 @@
 #ifndef SCHED_THREAD_H
 #define SCHED_THREAD_H
-#include "kernel/sched/percpu.h"
+#include "arch/percpu.h"
 #include "kernel/signal.h"
 #include "lib/list/list.h"
 #include "mm/pool.h"
@@ -141,6 +141,11 @@ void thread_exit(struct TASK *thread_over, int need_schedule);
 typedef int (*thread_all_action)(struct TASK *, void *);
 int thread_traverse_all(thread_all_action action, void *arg);
 struct TASK *thread_alloc_slot(const char *name, uint8_t priority);
+
+struct ARCH_REGS;
+
+void thread_build_child_stack(struct TASK *child, struct ARCH_REGS *parent_frame,
+                              uint32_t user_esp);
 void thread_ready(struct TASK *t);
 void thread_exit_current(void);
 void preempt_disable(void);

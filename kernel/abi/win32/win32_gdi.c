@@ -9,7 +9,7 @@
 #include "kernel/gui/shm.h"
 #include "kernel/gui/wm.h"
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 #include "mm/access.h"
 
@@ -178,7 +178,6 @@ static struct W32_WIN *w32_win_free(void) {
 }
 
 static void w32_gui_thread(void *arg) {
-    (void)arg;
     gui_session_run();
 }
 
@@ -592,10 +591,6 @@ int64_t w32_register_class_a(struct ARCH_REGS *r, uint64_t wc, uint64_t a1, uint
     char name[32];
     uint64_t proc;
     uint64_t namep;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     if (wc == 0 || !access_ok((const void *)(uintptr_t)wc, 72, 0))
         return 0;
     proc = *(const uint64_t *)(uintptr_t)(wc + 8);
@@ -628,8 +623,6 @@ int64_t w32_create_window_ex_a(struct ARCH_REGS *r, uint64_t exstyle, uint64_t c
     struct W32_WIN *w;
     int ci = -1;
     int slot;
-    (void)exstyle;
-    (void)style;
     for (int i = 0; i < 8; i++)
         if (w32_arg(r, 5 + i, &v[i]) != 0)
             return 0;
@@ -672,9 +665,6 @@ int64_t w32_create_window_ex_a(struct ARCH_REGS *r, uint64_t exstyle, uint64_t c
 int64_t w32_show_window(struct ARCH_REGS *r, uint64_t hwnd, uint64_t cmd, uint64_t a2,
                         uint64_t a3) {
     struct W32_WIN *w;
-    (void)r;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -692,10 +682,6 @@ int64_t w32_update_window(struct ARCH_REGS *r, uint64_t hwnd, uint64_t a1, uint6
                           uint64_t a3) {
     struct W32_WIN *w;
     struct W32_APP *a;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -713,10 +699,6 @@ int64_t w32_get_message_a(struct ARCH_REGS *r, uint64_t msg, uint64_t hwnd, uint
                           uint64_t hi) {
     struct W32_APP *a;
     uint64_t m[4];
-    (void)r;
-    (void)hwnd;
-    (void)lo;
-    (void)hi;
     a = w32_app();
     if (!a)
         return 0;
@@ -740,9 +722,6 @@ int64_t w32_peek_message_a(struct ARCH_REGS *r, uint64_t msg, uint64_t hwnd, uin
     struct W32_APP *a;
     uint64_t m[4];
     uint64_t rm;
-    (void)hwnd;
-    (void)lo;
-    (void)hi;
     if (w32_arg(r, 5, &rm) != 0)
         rm = 1;
     a = w32_app();
@@ -764,11 +743,6 @@ int64_t w32_peek_message_a(struct ARCH_REGS *r, uint64_t msg, uint64_t hwnd, uin
 
 int64_t w32_translate_message(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                               uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 0;
 }
 
@@ -776,10 +750,6 @@ int64_t w32_dispatch_message_a(struct ARCH_REGS *r, uint64_t msg, uint64_t a1, u
                                uint64_t a3) {
     struct W32_WIN *w;
     uint32_t hwnd;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     if (msg == 0 || !access_ok((const void *)(uintptr_t)msg, 32, 0))
         return 0;
     hwnd = *(const uint32_t *)(uintptr_t)msg;
@@ -791,21 +761,12 @@ int64_t w32_dispatch_message_a(struct ARCH_REGS *r, uint64_t msg, uint64_t a1, u
 
 int64_t w32_def_window_proc_a(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                               uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 0;
 }
 
 int64_t w32_post_quit_message(struct ARCH_REGS *r, uint64_t code, uint64_t a1, uint64_t a2,
                               uint64_t a3) {
     struct W32_APP *a;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     a = w32_app();
     if (!a)
         return 0;
@@ -817,7 +778,6 @@ int64_t w32_post_quit_message(struct ARCH_REGS *r, uint64_t code, uint64_t a1, u
 int64_t w32_post_message_a(struct ARCH_REGS *r, uint64_t hwnd, uint64_t msg, uint64_t wp,
                            uint64_t lp) {
     struct W32_WIN *w;
-    (void)r;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -829,10 +789,6 @@ int64_t w32_destroy_window(struct ARCH_REGS *r, uint64_t hwnd, uint64_t a1, uint
                            uint64_t a3) {
     struct W32_WIN *w;
     uint32_t id;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -846,10 +802,6 @@ int64_t w32_destroy_window(struct ARCH_REGS *r, uint64_t hwnd, uint64_t a1, uint
 int64_t w32_get_dc(struct ARCH_REGS *r, uint64_t hwnd, uint64_t a1, uint64_t a2, uint64_t a3) {
     struct W32_WIN *w;
     struct W32_DC *d;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -863,10 +815,6 @@ int64_t w32_get_dc(struct ARCH_REGS *r, uint64_t hwnd, uint64_t a1, uint64_t a2,
 
 int64_t w32_release_dc(struct ARCH_REGS *r, uint64_t hwnd, uint64_t hdc, uint64_t a2, uint64_t a3) {
     struct W32_DC *d = w32_dc((uint32_t)hdc);
-    (void)r;
-    (void)hwnd;
-    (void)a2;
-    (void)a3;
     if (!d || d->win < 0)
         return 0;
     w32_commit(&w32_wins[d->win]);
@@ -877,9 +825,6 @@ int64_t w32_release_dc(struct ARCH_REGS *r, uint64_t hwnd, uint64_t hdc, uint64_
 int64_t w32_begin_paint(struct ARCH_REGS *r, uint64_t hwnd, uint64_t ps, uint64_t a2, uint64_t a3) {
     struct W32_WIN *w;
     struct W32_DC *d;
-    (void)r;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -905,10 +850,6 @@ int64_t w32_begin_paint(struct ARCH_REGS *r, uint64_t hwnd, uint64_t ps, uint64_
 
 int64_t w32_end_paint(struct ARCH_REGS *r, uint64_t hwnd, uint64_t ps, uint64_t a2, uint64_t a3) {
     struct W32_DC *d;
-    (void)r;
-    (void)a2;
-    (void)a3;
-    (void)ps;
     if (ps != 0 && access_ok((const void *)(uintptr_t)ps, 12, 0))
         d = w32_dc(*(const uint32_t *)(uintptr_t)ps);
     else
@@ -918,16 +859,12 @@ int64_t w32_end_paint(struct ARCH_REGS *r, uint64_t hwnd, uint64_t ps, uint64_t 
         d->used = 0;
         return 1;
     }
-    (void)hwnd;
     return 1;
 }
 
 int64_t w32_get_client_rect(struct ARCH_REGS *r, uint64_t hwnd, uint64_t rc, uint64_t a2,
                             uint64_t a3) {
     struct W32_WIN *w;
-    (void)r;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -943,10 +880,6 @@ int64_t w32_get_client_rect(struct ARCH_REGS *r, uint64_t hwnd, uint64_t rc, uin
 int64_t w32_invalidate_rect(struct ARCH_REGS *r, uint64_t hwnd, uint64_t rc, uint64_t erase,
                             uint64_t a3) {
     struct W32_WIN *w;
-    (void)r;
-    (void)rc;
-    (void)erase;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -956,10 +889,6 @@ int64_t w32_invalidate_rect(struct ARCH_REGS *r, uint64_t hwnd, uint64_t rc, uin
 
 int64_t w32_load_cursor_a(struct ARCH_REGS *r, uint64_t inst, uint64_t name, uint64_t a2,
                           uint64_t a3) {
-    (void)r;
-    (void)inst;
-    (void)a2;
-    (void)a3;
     if (name <= 0xFFFFu)
         return (int64_t)name;
     return 1;
@@ -967,10 +896,6 @@ int64_t w32_load_cursor_a(struct ARCH_REGS *r, uint64_t inst, uint64_t name, uin
 
 int64_t w32_load_icon_a(struct ARCH_REGS *r, uint64_t inst, uint64_t name, uint64_t a2,
                         uint64_t a3) {
-    (void)r;
-    (void)inst;
-    (void)a2;
-    (void)a3;
     if (name <= 0xFFFFu)
         return (int64_t)name;
     return 1;
@@ -980,9 +905,6 @@ int64_t w32_message_box_a(struct ARCH_REGS *r, uint64_t hwnd, uint64_t text, uin
                           uint64_t type) {
     char kt[128];
     char kc[64];
-    (void)r;
-    (void)hwnd;
-    (void)type;
     win_user_name(kt, sizeof(kt), text);
     win_user_name(kc, sizeof(kc), caption);
     kprintf("win32: MessageBox [%s] %s\n", kc, kt);
@@ -992,9 +914,6 @@ int64_t w32_message_box_a(struct ARCH_REGS *r, uint64_t hwnd, uint64_t text, uin
 int64_t w32_set_window_text_a(struct ARCH_REGS *r, uint64_t hwnd, uint64_t text, uint64_t a2,
                               uint64_t a3) {
     struct W32_WIN *w;
-    (void)r;
-    (void)a2;
-    (void)a3;
     w = w32_win((uint32_t)hwnd);
     if (!w)
         return 0;
@@ -1010,10 +929,6 @@ int64_t w32_set_window_text_a(struct ARCH_REGS *r, uint64_t hwnd, uint64_t text,
 
 int64_t w32_get_system_metrics(struct ARCH_REGS *r, uint64_t index, uint64_t a1, uint64_t a2,
                                uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     if ((int)index == 0)
         return (int64_t)comp_screen_w();
     if ((int)index == 1)
@@ -1027,22 +942,12 @@ int64_t w32_get_system_metrics(struct ARCH_REGS *r, uint64_t index, uint64_t a1,
 
 int64_t w32_message_beep(struct ARCH_REGS *r, uint64_t type, uint64_t a1, uint64_t a2,
                          uint64_t a3) {
-    (void)r;
-    (void)type;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 1;
 }
 
 int64_t w32_create_compatible_dc(struct ARCH_REGS *r, uint64_t hdc, uint64_t a1, uint64_t a2,
                                  uint64_t a3) {
     struct W32_DC *d;
-    (void)r;
-    (void)hdc;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     d = w32_dc_alloc(-1);
     if (!d)
         return 0;
@@ -1051,9 +956,6 @@ int64_t w32_create_compatible_dc(struct ARCH_REGS *r, uint64_t hdc, uint64_t a1,
 
 int64_t w32_create_compatible_bitmap(struct ARCH_REGS *r, uint64_t hdc, uint64_t w, uint64_t h,
                                      uint64_t a3) {
-    (void)r;
-    (void)hdc;
-    (void)a3;
     return w32_bmp_new((int)(int32_t)w, (int)(int32_t)h);
 }
 
@@ -1062,9 +964,6 @@ int64_t w32_create_dib_section(struct ARCH_REGS *r, uint64_t hdc, uint64_t pbmi,
     int32_t bw;
     int32_t bh;
     int64_t h;
-    (void)r;
-    (void)hdc;
-    (void)usage;
     if (pbmi == 0 || !access_ok((const void *)(uintptr_t)pbmi, 40, 0))
         return 0;
     bw = *(const int32_t *)(uintptr_t)(pbmi + 4);
@@ -1086,9 +985,6 @@ int64_t w32_select_object(struct ARCH_REGS *r, uint64_t hdc, uint64_t obj, uint6
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     struct W32_OBJ *o = w32_obj((uint32_t)obj);
     uint32_t prev = 0;
-    (void)r;
-    (void)a2;
-    (void)a3;
     if (!d || !o)
         return 0;
     if (o->kind == 2) {
@@ -1109,10 +1005,6 @@ int64_t w32_select_object(struct ARCH_REGS *r, uint64_t hdc, uint64_t obj, uint6
 int64_t w32_delete_object(struct ARCH_REGS *r, uint64_t obj, uint64_t a1, uint64_t a2,
                           uint64_t a3) {
     int i;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     if ((obj & 0xFFFF0000u) != W32_HOBJ_TAG)
         return 0;
     i = (int)(obj & 0xFFFFu);
@@ -1132,10 +1024,6 @@ int64_t w32_delete_object(struct ARCH_REGS *r, uint64_t obj, uint64_t a1, uint64
 
 int64_t w32_delete_dc(struct ARCH_REGS *r, uint64_t hdc, uint64_t a1, uint64_t a2, uint64_t a3) {
     struct W32_DC *d = w32_dc((uint32_t)hdc);
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     if (!d)
         return 0;
     d->used = 0;
@@ -1155,7 +1043,6 @@ int64_t w32_bit_blt(struct ARCH_REGS *r, uint64_t dst, uint64_t x, uint64_t y, u
     int sx;
     int sy;
     int rop;
-    (void)r;
     for (int i = 0; i < 5; i++)
         if (w32_arg(r, 5 + i, &v[i]) != 0)
             return 0;
@@ -1193,7 +1080,6 @@ int64_t w32_stretch_blt(struct ARCH_REGS *r, uint64_t dst, uint64_t x, uint64_t 
     int sw;
     int sh;
     int rop;
-    (void)r;
     for (int i = 0; i < 7; i++)
         if (w32_arg(r, 5 + i, &v[i]) != 0)
             return 0;
@@ -1220,7 +1106,6 @@ int64_t w32_pat_blt(struct ARCH_REGS *r, uint64_t hdc, uint64_t x, uint64_t y, u
     uint64_t v[2];
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     struct GFX_CANVAS *cv;
-    (void)r;
     for (int i = 0; i < 2; i++)
         if (w32_arg(r, 5 + i, &v[i]) != 0)
             return 0;
@@ -1244,7 +1129,6 @@ int64_t w32_rectangle(struct ARCH_REGS *r, uint64_t hdc, uint64_t l, uint64_t t,
     int y0 = (int)(int32_t)t;
     int x1;
     uint32_t bc;
-    (void)r;
     if (w32_arg(r, 5, &b) != 0)
         return 0;
     if (!d)
@@ -1284,7 +1168,6 @@ int64_t w32_ellipse(struct ARCH_REGS *r, uint64_t hdc, uint64_t l, uint64_t t, u
     int ry;
     uint32_t bc;
     uint32_t pc;
-    (void)r;
     if (w32_arg(r, 5, &b) != 0)
         return 0;
     if (!d)
@@ -1330,7 +1213,6 @@ int64_t w32_ellipse(struct ARCH_REGS *r, uint64_t hdc, uint64_t l, uint64_t t, u
 
 int64_t w32_move_to_ex(struct ARCH_REGS *r, uint64_t hdc, uint64_t x, uint64_t y, uint64_t pt) {
     struct W32_DC *d = w32_dc((uint32_t)hdc);
-    (void)r;
     if (!d)
         return 0;
     if (pt != 0 && access_ok((const void *)(uintptr_t)pt, 8, 1)) {
@@ -1348,8 +1230,6 @@ int64_t w32_line_to(struct ARCH_REGS *r, uint64_t hdc, uint64_t x, uint64_t y, u
     int x1;
     int y1;
     uint32_t pc;
-    (void)r;
-    (void)a3;
     if (!d)
         return 0;
     cv = w32_dcv(d);
@@ -1385,7 +1265,6 @@ int64_t w32_text_out_a(struct ARCH_REGS *r, uint64_t hdc, uint64_t x, uint64_t y
     uint64_t n;
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     struct GFX_CANVAS *cv;
-    (void)r;
     if (w32_arg(r, 5, &n) != 0)
         return 0;
     if (!d)
@@ -1410,7 +1289,6 @@ int64_t w32_draw_text_a(struct ARCH_REGS *r, uint64_t hdc, uint64_t s, uint64_t 
     int32_t y1 = 0;
     int ul;
     int tw;
-    (void)r;
     if (w32_arg(r, 5, &fmt) != 0)
         return 0;
     if (!d)
@@ -1445,9 +1323,6 @@ int64_t w32_set_text_color(struct ARCH_REGS *r, uint64_t hdc, uint64_t color, ui
                            uint64_t a3) {
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     uint32_t old;
-    (void)r;
-    (void)a2;
-    (void)a3;
     if (!d)
         return 0;
     old = d->text;
@@ -1459,9 +1334,6 @@ int64_t w32_set_bk_color(struct ARCH_REGS *r, uint64_t hdc, uint64_t color, uint
                          uint64_t a3) {
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     uint32_t old;
-    (void)r;
-    (void)a2;
-    (void)a3;
     if (!d)
         return 0;
     old = d->bk;
@@ -1473,9 +1345,6 @@ int64_t w32_set_bk_mode(struct ARCH_REGS *r, uint64_t hdc, uint64_t mode, uint64
                         uint64_t a3) {
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     int old;
-    (void)r;
-    (void)a2;
-    (void)a3;
     if (!d)
         return 0;
     old = d->bk_mode;
@@ -1485,17 +1354,11 @@ int64_t w32_set_bk_mode(struct ARCH_REGS *r, uint64_t hdc, uint64_t mode, uint64
 
 int64_t w32_create_solid_brush(struct ARCH_REGS *r, uint64_t color, uint64_t a1, uint64_t a2,
                                uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)w32_obj_new(1, (uint32_t)color, 1);
 }
 
 int64_t w32_create_pen(struct ARCH_REGS *r, uint64_t style, uint64_t width, uint64_t color,
                        uint64_t a3) {
-    (void)r;
-    (void)a3;
     if ((int32_t)style != 0)
         return 0;
     return (int64_t)w32_obj_new(0, (uint32_t)color, (int)(int32_t)width);
@@ -1504,10 +1367,6 @@ int64_t w32_create_pen(struct ARCH_REGS *r, uint64_t style, uint64_t width, uint
 int64_t w32_get_stock_object(struct ARCH_REGS *r, uint64_t index, uint64_t a1, uint64_t a2,
                              uint64_t a3) {
     int i;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     i = (int)(int32_t)index;
     if (i < 0 || i > 8)
         return 0;
@@ -1526,8 +1385,6 @@ int64_t w32_fill_rect(struct ARCH_REGS *r, uint64_t hdc, uint64_t rc, uint64_t h
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     struct W32_OBJ *o = w32_obj((uint32_t)hbr);
     struct GFX_CANVAS *cv;
-    (void)r;
-    (void)a3;
     if (!d || !o)
         return 0;
     cv = w32_dcv(d);
@@ -1549,8 +1406,6 @@ int64_t w32_frame_rect(struct ARCH_REGS *r, uint64_t hdc, uint64_t rc, uint64_t 
     int w;
     int h;
     uint32_t c;
-    (void)r;
-    (void)a3;
     if (!d || !o)
         return 0;
     cv = w32_dcv(d);
@@ -1572,7 +1427,6 @@ int64_t w32_set_pixel(struct ARCH_REGS *r, uint64_t hdc, uint64_t x, uint64_t y,
     struct W32_DC *d = w32_dc((uint32_t)hdc);
     struct GFX_CANVAS *cv;
     gfx_color c;
-    (void)r;
     if (!d)
         return 0;
     cv = w32_dcv(d);
@@ -1585,10 +1439,6 @@ int64_t w32_set_pixel(struct ARCH_REGS *r, uint64_t hdc, uint64_t x, uint64_t y,
 
 int64_t w32_get_device_caps(struct ARCH_REGS *r, uint64_t hdc, uint64_t index, uint64_t a2,
                             uint64_t a3) {
-    (void)r;
-    (void)hdc;
-    (void)a2;
-    (void)a3;
     switch ((int)(int32_t)index) {
     case 8:
         return (int64_t)comp_screen_w();

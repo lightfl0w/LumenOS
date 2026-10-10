@@ -6,6 +6,7 @@
 #include "kernel/sched/thread.h"
 #include "kernel/userprog/process.h"
 #include "lib/string/str.h"
+#include "mm/access.h"
 #include "mm/pool.h"
 
 struct PE_DOS {
@@ -93,17 +94,6 @@ static int32_t pe_read(int32_t fd, uint32_t off, void *buf, uint32_t len) {
     return (read_file(fd, buf, len) == len) ? 0 : -1;
 }
 
-static void pe_apply_rx(uint32_t base, uint32_t pages) {
-    for (uint32_t i = 0; i < pages; i++) {
-        uint32_t pg = base + i * PAGE_SIZE;
-        uint64_t *pte = pte_ptr(pg);
-        if (pte != NULL && (*pte & PTE_P)) {
-            *pte = (*pte & 0x000ffffffffff000ull) | pte_wx(PTE_P | PTE_U, 0, 1);
-            arch_tlb_flush(pg);
-        }
-    }
-}
-
 static int pe_map_page(uint32_t pg) {
     uint64_t *pde = pde_ptr(pg);
     uint64_t *pte = pte_ptr(pg);
@@ -151,12 +141,12 @@ static void pe_relocs(const struct PE_IMAGE *img) {
         cnt = (total - (uint32_t)sizeof(struct PE_RELOCBLK)) / 2u;
         ent = (const uint16_t *)(const void *)(blk + 1);
         for (uint32_t i = 0; i < cnt; i++) {
-            uint32_t type = ent[i] >> 12;
-            uint32_t roff = ent[i] & 0xfffu;
-            if (type == PE_RELOC_DIR64) {
-                uint64_t *slot = (uint64_t *)(uintptr_t)(img->base + blk->va + roff);
-                *slot = (uint64_t)((int64_t)*slot + delta);
+            if ((ent[i] >> 12) != PE_RELOC_DIR64) {
+                continue;
             }
+            uint64_t *slot =
+                (uint64_t *)(uintptr_t)(img->base + blk->va + (ent[i] & 0xfffu));
+            *slot = (uint64_t)((int64_t)*slot + delta);
         }
         off += total;
     }
@@ -267,7 +257,7 @@ int32_t pe_load(int32_t fd, struct EXEC_IMAGE *out) {
     if (get_a_page(thunk) == 0)
         return -1;
     win32_thunk_init(thunk);
-    pe_apply_rx(thunk, 1);
+    mm_make_user_rx(thunk, 1);
     img->thunk_base = thunk;
     rt = thunk + PAGE_SIZE;
     if (get_a_page(rt) == 0)
@@ -305,7 +295,7 @@ int32_t pe_load(int32_t fd, struct EXEC_IMAGE *out) {
         va = img_base + img->sec[i].va;
         first = va & ~(PAGE_SIZE - 1);
         pages = DIV_ROUND_UP((va - first) + size, PAGE_SIZE);
-        pe_apply_rx(first, pages);
+        mm_make_user_rx(first, pages);
     }
     img->brk_base = rt + PAGE_SIZE;
     out->entry = (int32_t)img->entry;

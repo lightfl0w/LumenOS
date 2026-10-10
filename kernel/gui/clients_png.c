@@ -95,7 +95,6 @@ static void png_viewer_render(struct COMP_DEMO_CLIENT *dc) {
 
 static void png_viewer_on_key(struct COMP_DEMO_CLIENT *dc, int scancode, int mods) {
     struct PNG_VIEWER *v = (struct PNG_VIEWER *)dc;
-    (void)mods;
     int next = v->idx;
     if (scancode == KBD_SC_SPACE || scancode == KBD_SC_ENTER || scancode == KBD_SC_RIGHT)
         next = (v->idx + 1) % VIEWER_MAX_FILES;
@@ -116,7 +115,6 @@ static const struct CLIENT_DESC png_desc = {"pngview", "pngview", png_viewer_ren
                                             png_viewer_on_key, 1000000};
 
 void clients_png_thread(void *arg) {
-    (void)arg;
     struct PNG_VIEWER viewer;
     struct PNG_VIEWER *v = &viewer;
     memset(v, 0, sizeof(*v));

@@ -698,8 +698,6 @@ static void test_extras(void) {
     pthread_t th;
     void *(*fn)(void *) = 0;
     chk("extra/pthread_self", pthread_self() != 0);
-    (void)th;
-    (void)fn;
 #endif
     errno = 0;
     chk("extra/sysconf_pagesize", sysconf(_SC_PAGESIZE) > 0);

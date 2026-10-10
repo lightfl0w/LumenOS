@@ -1,8 +1,9 @@
 #include "drivers/char/serial/mouse.h"
 #include "drivers/driver_ops.h"
+#include "arch/x86_64/irq.h"
 
 #include "drivers/input/keyboard/keyboard.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 
 #define KBD_DATA 0x60
 #define KBD_STATUS 0x64
@@ -85,3 +86,8 @@ void mouse_handler(void) {
     if (hook)
         hook(dx, -dy, buttons);
 }
+
+static void mouse_handler_irq(uint8_t vector) {
+    mouse_handler();
+}
+IRQ_REGISTER(IRQ_MOUSE, mouse_handler_irq, "mouse");

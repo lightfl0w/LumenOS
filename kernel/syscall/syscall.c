@@ -14,8 +14,8 @@
 #include "fs/pbcache.h"
 #include "kernel/abi/linux/linux_compat.h"
 #include "kernel/abi/win32/win32.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/gui/gui.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
@@ -23,7 +23,7 @@
 #include "kernel/syscall/futex.h"
 #include "kernel/syscall/mmap.h"
 #include "kernel/syscall/syscall_args.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/clone.h"
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/fork.h"
@@ -60,7 +60,6 @@ static int32_t sys_gettimeofday(struct SYS_TIMEVAL *tv, void *tz) {
     if (tv == NULL) {
         return -1;
     }
-    (void)tz;
     memset(tv, 0, sizeof(*tv));
     tv->tv_sec = (int32_t)rtc_unix_time();
     tv->tv_usec = 0;
@@ -163,7 +162,6 @@ static const char *task_status_str(enum TASK_STATUS s) {
 }
 
 static int ps_action(struct TASK *t, void *arg) {
-    (void)arg;
     char buf[80];
     const char *parent = (t->parent_pid == -1) ? "(none)" : "?";
     if (t->parent_pid >= 0) {
@@ -268,7 +266,6 @@ static inline int64_t nsys_norm(int64_t r) {
 }
 
 static int64_t nsys_getpid(struct ARCH_REGS *r) {
-    (void)r;
     return nsys_norm((int64_t)sys_getpid());
 }
 
@@ -284,7 +281,6 @@ static int64_t nsys_putchar(struct ARCH_REGS *r) {
 }
 
 static int64_t nsys_clear(struct ARCH_REGS *r) {
-    (void)r;
     return nsys_norm((int64_t)sys_clear());
 }
 
@@ -401,7 +397,6 @@ static int64_t nsys_stat(struct ARCH_REGS *r) {
 }
 
 static int64_t nsys_ps(struct ARCH_REGS *r) {
-    (void)r;
     sys_ps();
     return 0;
 }
@@ -440,7 +435,6 @@ static int64_t nsys_fd_redirect(struct ARCH_REGS *r) {
 }
 
 static int64_t nsys_gui(struct ARCH_REGS *r) {
-    (void)r;
     return (uint32_t)gui_session_run();
 }
 
@@ -628,7 +622,6 @@ __attribute__((noinline)) static void smash_frame(void) {
 }
 
 static int64_t nsys_smash(struct ARCH_REGS *r) {
-    (void)r;
     smash_frame();
     kprintf("[smash] returned, canary failed to detect\n");
     return 0;
@@ -657,7 +650,6 @@ static int64_t nsys_nanosleep(struct ARCH_REGS *r) {
 }
 
 static int64_t nsys_getid(struct ARCH_REGS *r) {
-    (void)r;
     return nsys_norm((int64_t)sys_getid());
 }
 
@@ -678,7 +670,6 @@ static int64_t nsys_icmp_recv(struct ARCH_REGS *r) {
 }
 
 static int64_t nsys_shutdown(struct ARCH_REGS *r) {
-    (void)r;
     return nsys_norm((int64_t)sys_shutdown());
 }
 
@@ -851,7 +842,6 @@ static int64_t nsys_tls_recv(struct ARCH_REGS *r) {
 }
 
 static int64_t nsys_tls_close(struct ARCH_REGS *r) {
-    (void)r;
     if (!s_tls_conn)
         return (uint32_t)-1;
     tls_close_tcp(s_tls_conn);
@@ -973,72 +963,84 @@ uint32_t sc_last_stk[MAX_TASKS][16];
 
 #define SC_TRACE_ENABLE 0
 
-static int sc_trace_interest(uint32_t nr) {
-#if !SC_TRACE_ENABLE
-    (void)nr;
-    return 0;
-#else
-    switch (nr) {
-    case 0:
-    case 1:
-    case 3:
-    case 8:
-    case 9:
-    case 10:
-    case 11:
-    case 12:
-    case 16:
-    case 32:
-    case 33:
-    case 56:
-    case 57:
-    case 58:
-    case 59:
-    case 60:
-    case 61:
-    case 72:
-    case 202:
-    case 231:
-    case 257:
-    case 290:
-    case 293:
-    case 435:
-    case 35:
-    case 230:
-    case 270:
-    case 271:
-    case 322:
-    case 7:
-    case 23:
-    case 232:
-    case 281:
-    case 41:
-    case 42:
-    case 44:
-    case 45:
-    case 46:
-    case 47:
-    case 49:
-    case 54:
-    case 55:
-    case 82:
-    case 86:
-    case 88:
-    case 92:
-    case 93:
-    case 94:
-    case 260:
-    case 266:
-        return 1;
+#define SC_INTEREST_TRACE  0x1u
+#define SC_INTEREST_RESULT 0x2u
+
+#if SC_TRACE_ENABLE
+struct SC_INTEREST {
+    uint32_t nr;
+    uint32_t flags;
+};
+
+static const struct SC_INTEREST sc_interest[] = {
+    {SYS_GETPID, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_WRITE, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_PUTCHAR, SC_INTEREST_TRACE},
+    {SYS_PIPE, SC_INTEREST_RESULT},
+    {SYS_LINUX_select, SC_INTEREST_TRACE},
+    {SYS_CHDIR, SC_INTEREST_TRACE},
+    {SYS_LINUX_poll, SC_INTEREST_RESULT},
+    {SYS_MKDIR, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_RMDIR, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_OPEN, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_CLOSE, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_LSEEK, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_READDIR, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_MMAP, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_MUNMAP, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_FUTEX, SC_INTEREST_TRACE},
+    {SYS_GETDENTS, SC_INTEREST_TRACE},
+    {SYS_READLINK, SC_INTEREST_TRACE},
+    {SYS_RENAME, SC_INTEREST_TRACE},
+    {SYS_TRUNCATE, SC_INTEREST_TRACE},
+    {SYS_CHMOD, SC_INTEREST_TRACE},
+    {SYS_CLOCK_GETTIME, SC_INTEREST_TRACE},
+    {SYS_NANOSLEEP, SC_INTEREST_TRACE},
+    {SYS_EXIT_GROUP, SC_INTEREST_TRACE},
+    {SYS_MMAP2, SC_INTEREST_TRACE},
+    {SYS_ICMP_SEND, SC_INTEREST_TRACE},
+    {SYS_ICMP_RECV, SC_INTEREST_TRACE},
+    {SYS_SHUTDOWN, SC_INTEREST_TRACE},
+    {SYS_SOCKET, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_BIND, SC_INTEREST_TRACE},
+    {SYS_LISTEN, SC_INTEREST_TRACE},
+    {SYS_GETSOCKOPT, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_TLS_SEND, SC_INTEREST_TRACE},
+
+    {SYS_LINUX_futex, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_LINUX_openat, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+
+    {322, SC_INTEREST_TRACE},
+    {435, SC_INTEREST_TRACE},
+    {SYS_LINUX_eventfd2, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_LINUX_pipe2, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_LINUX_link, SC_INTEREST_TRACE},
+    {SYS_LINUX_symlink, SC_INTEREST_TRACE},
+    {SYS_LINUX_symlinkat, SC_INTEREST_TRACE},
+    {SYS_LINUX_chown, SC_INTEREST_TRACE},
+    {SYS_LINUX_fchown, SC_INTEREST_TRACE},
+    {SYS_LINUX_lchown, SC_INTEREST_TRACE},
+    {SYS_LINUX_clock_nanosleep, SC_INTEREST_TRACE},
+    {SYS_LINUX_exit_group, SC_INTEREST_TRACE},
+    {SYS_LINUX_epoll_wait, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_LINUX_epoll_pwait, SC_INTEREST_TRACE | SC_INTEREST_RESULT},
+    {SYS_LINUX_fchownat, SC_INTEREST_TRACE},
+    {SYS_LINUX_pselect6, SC_INTEREST_TRACE},
+    {SYS_LINUX_ppoll, SC_INTEREST_TRACE},
+};
+
+static uint32_t sc_interest_flags(uint32_t nr) {
+    for (size_t i = 0; i < sizeof(sc_interest) / sizeof(sc_interest[0]); i++) {
+        if (sc_interest[i].nr == nr)
+            return sc_interest[i].flags;
     }
     return 0;
-#endif
 }
 
 static void sc_read_str(uint64_t up, char *buf, uint32_t cap) {
     uint32_t i;
     buf[0] = 0;
-    if (up < USER_EXEC64_FLOOR || !user_range_readable((uint32_t)up, cap - 1)) {
+    if (cap == 0 || up < USER_EXEC64_FLOOR || !user_range_readable((uint32_t)up, cap - 1)) {
         return;
     }
     for (i = 0; i < cap - 1; i++) {
@@ -1052,12 +1054,12 @@ static void sc_read_str(uint64_t up, char *buf, uint32_t cap) {
 
 static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
     char pbuf[40];
-    if (nr == 59 || nr == 257) {
-        sc_read_str(nr == 257 ? r->rsi : r->rdi, pbuf, sizeof(pbuf));
+    if (nr == SYS_SOCKET || nr == SYS_LINUX_openat) {
+        sc_read_str(nr == SYS_LINUX_openat ? r->rsi : r->rdi, pbuf, sizeof(pbuf));
         kprintf("[sc] pid=%d nr=%u path=%s\n", current->pid, nr, pbuf);
         return;
     }
-    if (nr == 1) {
+    if (nr == SYS_WRITE) {
         if (r->rdi == 0x800) {
             sc_read_str(r->rsi, pbuf, sizeof(pbuf));
             kprintf("[sc] pid=%d nr=1 fd=EV val=%s\n", current->pid, pbuf);
@@ -1068,7 +1070,7 @@ static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
         }
         return;
     }
-    if (nr == 270 || nr == 271) {
+    if (nr == SYS_LINUX_pselect6 || nr == SYS_LINUX_ppoll) {
         uint32_t nfds = (uint32_t)r->rdi;
         if (nfds > 4)
             nfds = 4;
@@ -1084,11 +1086,11 @@ static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
         kprintf("\n");
         return;
     }
-    if (nr == 0) {
+    if (nr == SYS_GETPID) {
         kprintf("[sc] pid=%d nr=0 fd=%d n=%d\n", current->pid, (int)r->rdi, (int)(uint32_t)r->rdx);
         return;
     }
-    if (nr == 7) {
+    if (nr == SYS_CHDIR) {
         uint32_t nfds = (uint32_t)r->rsi;
         if (nfds > 6)
             nfds = 6;
@@ -1106,7 +1108,7 @@ static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
         kprintf(" tmo=%d\n", (int32_t)(uint32_t)r->rdx);
         return;
     }
-    if (nr == 202) {
+    if (nr == SYS_LINUX_futex) {
         kprintf("[sc] pid=%d nr=202 uaddr=%x op=%x val=%x\n", current->pid, (uint32_t)r->rdi,
                 (uint32_t)r->rsi, (uint32_t)r->rdx);
         return;
@@ -1115,37 +1117,17 @@ static void sc_trace_emit(struct ARCH_REGS *r, uint32_t nr) {
             (uint32_t)r->rsi, (uint32_t)r->rdx, (uint32_t)current->exe_bias, (unsigned)tick);
 }
 
-static int sc_ret_interest(uint32_t nr) {
-#if !SC_TRACE_ENABLE
-    (void)nr;
-    return 0;
-#else
-    switch (nr) {
-    case 0:
-    case 1:
-    case 8:
-    case 9:
-    case 10:
-    case 11:
-    case 12:
-    case 59:
-    case 257:
-    case 290:
-    case 293:
-    case 32:
-    case 33:
-    case 72:
-    case 202:
-    case 7:
-    case 23:
-    case 232:
-    case 281:
-    case 16:
-        return 1;
-    }
-    return 0;
-#endif
+static int sc_trace_interest(uint32_t nr) {
+    return (sc_interest_flags(nr) & SC_INTEREST_TRACE) != 0;
 }
+static int sc_ret_interest(uint32_t nr) {
+    return (sc_interest_flags(nr) & SC_INTEREST_RESULT) != 0;
+}
+#else
+#define sc_trace_interest(nr) 0
+#define sc_ret_interest(nr) 0
+#define sc_trace_emit(r, nr) ((void)(r), (void)(nr))
+#endif
 
 uint64_t syscall_handler(struct ARCH_REGS *r) {
     uint32_t nr = (uint32_t)SC_NR;
@@ -1161,7 +1143,7 @@ uint64_t syscall_handler(struct ARCH_REGS *r) {
         for (uint32_t k = 0; k < 16; k++) {
             uint32_t ua = us + k * 4;
             sc_last_stk[sslot][k] =
-                (us >= USER_EXEC64_FLOOR && ua < 0xc0000000u && page_is_mapped(ua))
+                (us >= USER_EXEC64_FLOOR && ua < USER_STACK_TOP && page_is_mapped(ua))
                     ? *(const uint32_t *)(uintptr_t)ua
                     : 0;
         }

@@ -1,6 +1,6 @@
 #include "arch/x86_64/mm/paging.h"
 #include "arch/mmu.h"
-#include "kernel/sched/percpu.h"
+#include "arch/percpu.h"
 #include "kernel/sched/thread.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
@@ -77,29 +77,39 @@ uint64_t *arch_pte_create(uint64_t pgd_phys, uint64_t vaddr) {
     return &table_at(X86_PTE_PHYS(pd[idx]))[X86_PT_INDEX(vaddr)];
 }
 
+static void walk_pd(uint64_t pd_phys, void (*mark)(uint64_t, uint64_t, void *), void *ctx) {
+    uint64_t *pd = table_at(pd_phys);
+    for (int k = 0; k < 512; k++) {
+        uint64_t e = pd[k];
+        if (!(e & PTE_P) || (e & X86_PTE_PS)) {
+            continue;
+        }
+        mark(X86_PTE_PHYS(e), PAGE_SIZE, ctx);
+    }
+}
+
+static void walk_pdp(uint64_t *pdp, void (*mark)(uint64_t, uint64_t, void *), void *ctx) {
+    for (int j = 0; j < 512; j++) {
+        uint64_t e = pdp[j];
+        if (!(e & PTE_P) || (e & X86_PTE_PS)) {
+            continue;
+        }
+        uint64_t pd_phys = X86_PTE_PHYS(e);
+        mark(pd_phys, PAGE_SIZE, ctx);
+        walk_pd(pd_phys, mark, ctx);
+    }
+}
+
 void arch_walk_page_tables(uint64_t pgd_phys,
                            void (*mark)(uint64_t phys, uint64_t bytes, void *ctx), void *ctx) {
     uint64_t *pml4 = table_at(pgd_phys);
     for (int i = 0; i < 512; i++) {
         uint64_t e = pml4[i];
-        if (!(e & PTE_P))
+        if (!(e & PTE_P)) {
             continue;
+        }
         uint64_t pdp_phys = X86_PTE_PHYS(e);
         mark(pdp_phys, PAGE_SIZE, ctx);
-        uint64_t *pdp = table_at(pdp_phys);
-        for (int j = 0; j < 512; j++) {
-            uint64_t e2 = pdp[j];
-            if (!(e2 & PTE_P) || (e2 & X86_PTE_PS))
-                continue;
-            uint64_t pd_phys = X86_PTE_PHYS(e2);
-            mark(pd_phys, PAGE_SIZE, ctx);
-            uint64_t *pd = table_at(pd_phys);
-            for (int k = 0; k < 512; k++) {
-                uint64_t e3 = pd[k];
-                if (!(e3 & PTE_P) || (e3 & X86_PTE_PS))
-                    continue;
-                mark(X86_PTE_PHYS(e3), PAGE_SIZE, ctx);
-            }
-        }
+        walk_pdp(table_at(pdp_phys), mark, ctx);
     }
 }

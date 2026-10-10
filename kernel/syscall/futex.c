@@ -2,11 +2,11 @@
 #include "arch/interrupt/interrupt.h"
 #include "drivers/char/serial/console/io.h"
 #include "drivers/char/serial/rtc.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/list/list.h"
 #include "lib/string/str.h"
 #include "uapi/linux_abi.h"
@@ -151,7 +151,6 @@ static int32_t futex_do_wake(uint32_t uaddr, uint32_t nr, uint32_t bitset) {
 
 int32_t sys_futex(uint32_t uaddr, uint32_t op, uint32_t val, uint32_t timeout, uint32_t uaddr2,
                   uint32_t val3) {
-    (void)uaddr2;
     if (uaddr == 0) {
         return -EINVAL;
     }

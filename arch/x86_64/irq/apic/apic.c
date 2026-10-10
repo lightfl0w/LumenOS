@@ -1,10 +1,11 @@
 #include "arch/x86_64/irq/apic.h"
 #include "arch/x86_64/irq.h"
+#include "arch/x86_64/irq.h"
 #include "arch/x86_64/irq/acpi.h"
 #include "arch/x86_64/irq/interrupt/interrupt.h"
-#include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
-#include "kernel/time/pit.h"
+#include "lib/printf/printf.h"
+#include "arch/asm_func.h"
+#include "arch/time/pit.h"
 #include "mm/pool.h"
 #include <stdint.h>
 #define MSR_APIC_BASE 0x1B
@@ -30,11 +31,6 @@
 #define IO_IR_MASK (1u << 16)
 #define IO_IR_TRIGGER (1u << 15)
 #define IO_IR_POLARITY (1u << 13)
-#define IRQ_TIMER 0
-#define IRQ_KEYBOARD 1
-#define IRQ_MOUSE 12
-#define IRQ_IDE 14
-#define VECTOR_BASE 0x20
 static volatile uint32_t *lapic;
 static volatile uint32_t *ioapic;
 static int s_apic_active;
@@ -67,7 +63,7 @@ void lapic_timer_program_periodic(void) {
         return;
     }
     lapic_write(LAPIC_DCR, LAPIC_TIMER_DIV);
-    lapic_write(LAPIC_LVT_T, (VECTOR_BASE + IRQ_TIMER) | LVTT_PERIODIC);
+    lapic_write(LAPIC_LVT_T, (IRQ_VECTOR_BASE + IRQ_TIMER) | LVTT_PERIODIC);
     lapic_write(LAPIC_TIMER_ICR, g_timer_count);
 }
 #define LAPIC_ID 0x020
@@ -159,13 +155,16 @@ static void ioapic_init(void) {
     }
     for (uint32_t pin = 0; pin <= maxpin; pin++) {
         uint32_t reg = IOREG_TABLE + 2 * pin;
-        ioapic_write(reg, VECTOR_BASE | IO_IR_TRIGGER | IO_IR_MASK);
+        ioapic_write(reg, IRQ_VECTOR_BASE | IO_IR_TRIGGER | IO_IR_MASK);
         ioapic_write(reg + 1, 0);
     }
-    ioapic_route(IRQ_TIMER, VECTOR_BASE + IRQ_TIMER);
-    ioapic_route(IRQ_KEYBOARD, VECTOR_BASE + IRQ_KEYBOARD);
-    ioapic_route(IRQ_MOUSE, VECTOR_BASE + IRQ_MOUSE);
-    ioapic_route(IRQ_IDE, VECTOR_BASE + IRQ_IDE);
+
+    ioapic_route(IRQ_TIMER, IRQ_VECTOR_BASE + IRQ_TIMER);
+    for (const struct IRQ_HANDLER *h = __irq_handlers_start; h < __irq_handlers_end; h++) {
+        if (h->irq != IRQ_TIMER) {
+            ioapic_route(h->irq, IRQ_VECTOR_BASE + h->irq);
+        }
+    }
 }
 static void disable_pic(void) {
     outb(0x21, 0xFF);
@@ -226,7 +225,7 @@ int apic_init(void) {
         uint32_t reg = IOREG_TABLE + 2 * irq_pin(IRQ_TIMER);
         ioapic_write(reg, IO_IR_MASK | irq_route_flags(IRQ_TIMER));
         kprintf_v("[APIC] lapic timer vector%u count=%u (%u Hz, div16)\n",
-                  (unsigned)(VECTOR_BASE + IRQ_TIMER), (unsigned)g_timer_count, (unsigned)PIT_HZ);
+                  (unsigned)(IRQ_VECTOR_BASE + IRQ_TIMER), (unsigned)g_timer_count, (unsigned)PIT_HZ);
     }
     kprintf_v("[APIC] id=%u lapic=0x%x ioapic=0x%x\n", (unsigned)lapic_get_id(),
               madt ? madt->lapic_addr : ACPI_APIC_DEFAULT_LAPIC,

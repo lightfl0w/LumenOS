@@ -5,7 +5,7 @@
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/process.h"
 #include "kernel/userprog/wait_exit.h"
 #include "lib/string/str.h"
@@ -424,11 +424,6 @@ int32_t win_user_name(char *dst, uint32_t cap, uint64_t uptr) {
 }
 
 static int64_t win_null(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 0;
 }
 
@@ -442,7 +437,6 @@ static int64_t win_write_file(struct ARCH_REGS *r, uint64_t handle, uint64_t buf
                               uint64_t written) {
     if (win_file((uint32_t)handle) != 0)
         return win_file_write(r, handle, buf, n, written);
-    (void)handle;
     if (n != 0 && !access_ok((const void *)(uintptr_t)buf, (size_t)n, 0))
         return 0;
     uint32_t w = (uint32_t)TTY.write((const char *)(uintptr_t)buf, (uint32_t)n);
@@ -453,39 +447,22 @@ static int64_t win_write_file(struct ARCH_REGS *r, uint64_t handle, uint64_t buf
 
 static int64_t win_get_std_handle(struct ARCH_REGS *r, uint64_t which, uint64_t a1, uint64_t a2,
                                   uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)(int32_t)(uint32_t)which;
 }
 
 static int64_t win_exit_process(struct ARCH_REGS *r, uint64_t code, uint64_t a1, uint64_t a2,
                                 uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     sys_exit((int32_t)code);
     return 0;
 }
 
 static int64_t win_get_last_error(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                                   uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)(uint32_t)current->win_last_error;
 }
 
 static int64_t win_set_last_error(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                                   uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     current->win_last_error = (uint32_t)a0;
     return 0;
 }
@@ -513,8 +490,6 @@ static int64_t win_create_file_a(struct ARCH_REGS *r, uint64_t name, uint64_t ac
 static int64_t win_create_file_a6(struct ARCH_REGS *r, uint64_t name, uint64_t access,
                                   uint64_t share, uint64_t disposition, uint64_t flags,
                                   uint64_t attrs) {
-    (void)share;
-    (void)attrs;
     char kpath[WIN_STR_MAX];
     win_path_from_user(kpath, sizeof(kpath), name);
     if (kpath[0] == 0) {
@@ -580,10 +555,6 @@ static int64_t win_create_file_a6(struct ARCH_REGS *r, uint64_t name, uint64_t a
 
 static int64_t win_close_handle(struct ARCH_REGS *r, uint64_t h, uint64_t a1, uint64_t a2,
                                 uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     struct WIN_FILE *wf = win_file((uint32_t)h);
     if (wf != 0) {
         close_file(wf->kfd);
@@ -628,7 +599,6 @@ static int64_t win_read_file(struct ARCH_REGS *r, uint64_t h, uint64_t buf, uint
             copy_to_user((void *)(uintptr_t)read_out, &got, 4);
         }
     }
-    (void)r;
     return (int64_t)n;
 }
 
@@ -649,14 +619,11 @@ static int64_t win_file_write(struct ARCH_REGS *r, uint64_t h, uint64_t buf, uin
         copy_to_user((void *)(uintptr_t)written_out, &put, 4);
     }
     win_set_last_error_val(WIN_LE_SUCCESS);
-    (void)r;
     return (int64_t)n;
 }
 
 static int64_t win_set_file_pointer(struct ARCH_REGS *r, uint64_t h, uint64_t dist, uint64_t method,
                                     uint64_t a4) {
-    (void)r;
-    (void)a4;
     uint64_t newptr = win_stack_arg(r, 1);
     struct WIN_FILE *wf = win_file((uint32_t)h);
     if (wf == 0) {
@@ -703,10 +670,6 @@ static int64_t win_get_file_size_ex(struct ARCH_REGS *r, uint64_t h, uint64_t a1
 
 static int64_t win_get_file_size(struct ARCH_REGS *r, uint64_t h, uint64_t a1, uint64_t a2,
                                  uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     uint64_t size_high = win_stack_arg(r, 0);
     struct WIN_FILE *wf = win_file((uint32_t)h);
     if (wf == 0) {
@@ -732,10 +695,6 @@ static int64_t win_get_file_size(struct ARCH_REGS *r, uint64_t h, uint64_t a1, u
 
 static int64_t win_delete_file_a(struct ARCH_REGS *r, uint64_t name, uint64_t a1, uint64_t a2,
                                  uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     char kpath[WIN_STR_MAX];
     win_path_from_user(kpath, sizeof(kpath), name);
     if (kpath[0] == 0) {
@@ -752,10 +711,6 @@ static int64_t win_delete_file_a(struct ARCH_REGS *r, uint64_t name, uint64_t a1
 
 static int64_t win_get_file_type(struct ARCH_REGS *r, uint64_t h, uint64_t a1, uint64_t a2,
                                  uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     struct WIN_FILE *wf = win_file((uint32_t)h);
     if (wf != 0)
         return 1;
@@ -767,41 +722,23 @@ static int64_t win_get_file_type(struct ARCH_REGS *r, uint64_t h, uint64_t a1, u
 }
 
 static int64_t win_sleep(struct ARCH_REGS *r, uint64_t ms, uint64_t a1, uint64_t a2, uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     mtime_sleep_interruptible((uint32_t)ms);
     return 0;
 }
 
 static int64_t win_get_tick_count(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                                   uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)((uint64_t)tick * 1000u / PIT_HZ);
 }
 
 static int64_t win_get_module_handle_a(struct ARCH_REGS *r, uint64_t name, uint64_t a1, uint64_t a2,
                                        uint64_t a3) {
-    (void)r;
-    (void)name;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)(uint64_t)current->win_base;
 }
 
 static int64_t win_get_proc_address(struct ARCH_REGS *r, uint64_t mod, uint64_t name, uint64_t a2,
                                     uint64_t a3) {
     char kname[WIN_NAME_MAX];
-    (void)r;
-    (void)mod;
-    (void)a2;
-    (void)a3;
     if (win_user_name(kname, sizeof(kname), name) != 0)
         return 0;
     return (int64_t)(uint64_t)win32_lookup(0, kname);
@@ -809,30 +746,16 @@ static int64_t win_get_proc_address(struct ARCH_REGS *r, uint64_t mod, uint64_t 
 
 static int64_t win_load_library_a(struct ARCH_REGS *r, uint64_t name, uint64_t a1, uint64_t a2,
                                   uint64_t a3) {
-    (void)r;
-    (void)name;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)(uint64_t)current->win_base;
 }
 
 static int64_t win_free_library(struct ARCH_REGS *r, uint64_t mod, uint64_t a1, uint64_t a2,
                                 uint64_t a3) {
-    (void)r;
-    (void)mod;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 1;
 }
 
 static int64_t win_virtual_protect(struct ARCH_REGS *r, uint64_t addr, uint64_t size, uint64_t prot,
                                    uint64_t old) {
-    (void)r;
-    (void)addr;
-    (void)size;
-    (void)prot;
     if (old != 0 && access_ok((const void *)(uintptr_t)old, 4, 1))
         *(uint32_t *)(uintptr_t)old = WIN_PAGE_EXECUTE_READWRITE;
     return 1;
@@ -840,9 +763,6 @@ static int64_t win_virtual_protect(struct ARCH_REGS *r, uint64_t addr, uint64_t 
 
 static int64_t win_virtual_query(struct ARCH_REGS *r, uint64_t addr, uint64_t buf, uint64_t len,
                                  uint64_t a3) {
-    (void)r;
-    (void)addr;
-    (void)a3;
     if (len != 0 && access_ok((const void *)(uintptr_t)buf, (size_t)len, 1)) {
         memset((void *)(uintptr_t)buf, 0, (size_t)len);
         if (len >= 0x20u)
@@ -853,40 +773,21 @@ static int64_t win_virtual_query(struct ARCH_REGS *r, uint64_t addr, uint64_t bu
 
 static int64_t win_tls_get_value(struct ARCH_REGS *r, uint64_t idx, uint64_t a1, uint64_t a2,
                                  uint64_t a3) {
-    (void)r;
-    (void)idx;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 0;
 }
 
 static int64_t win_tls_set_value(struct ARCH_REGS *r, uint64_t idx, uint64_t v, uint64_t a2,
                                  uint64_t a3) {
-    (void)r;
-    (void)idx;
-    (void)v;
-    (void)a2;
-    (void)a3;
     return 1;
 }
 
 static int64_t win_section_noop(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                                 uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 0;
 }
 
 static int64_t win_puts(struct ARCH_REGS *r, uint64_t s, uint64_t a1, uint64_t a2, uint64_t a3) {
     struct WIN_OUT out;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     out.len = 0;
     out.total = 0;
     win_out_str(&out, (const char *)(uintptr_t)s);
@@ -897,34 +798,20 @@ static int64_t win_puts(struct ARCH_REGS *r, uint64_t s, uint64_t a1, uint64_t a
 
 static int64_t win_putchar(struct ARCH_REGS *r, uint64_t c, uint64_t a1, uint64_t a2, uint64_t a3) {
     char ch = (char)(uint32_t)c;
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     TTY.write(&ch, 1);
     return (int64_t)(uint8_t)ch;
 }
 
 static int64_t win_printf(struct ARCH_REGS *r, uint64_t fmt, uint64_t a1, uint64_t a2,
                           uint64_t a3) {
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_vprintf(r, (const char *)(uintptr_t)fmt);
 }
 
 static int64_t win_strlen(struct ARCH_REGS *r, uint64_t s, uint64_t a1, uint64_t a2, uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)(uint64_t)win_str_len((const char *)(uintptr_t)s, 0x10000u);
 }
 
 static int64_t win_strcmp(struct ARCH_REGS *r, uint64_t a, uint64_t b, uint64_t a2, uint64_t a3) {
-    (void)r;
-    (void)a2;
-    (void)a3;
     for (uint32_t i = 0; i < WIN_STR_MAX; i++) {
         uint8_t ca;
         uint8_t cb;
@@ -942,8 +829,6 @@ static int64_t win_strcmp(struct ARCH_REGS *r, uint64_t a, uint64_t b, uint64_t 
 }
 
 static int64_t win_strncmp(struct ARCH_REGS *r, uint64_t a, uint64_t b, uint64_t n, uint64_t a3) {
-    (void)r;
-    (void)a3;
     for (uint64_t i = 0; i < n; i++) {
         uint8_t ca;
         uint8_t cb;
@@ -962,8 +847,6 @@ static int64_t win_strncmp(struct ARCH_REGS *r, uint64_t a, uint64_t b, uint64_t
 
 static int64_t win_memcpy(struct ARCH_REGS *r, uint64_t dst, uint64_t src, uint64_t n,
                           uint64_t a3) {
-    (void)r;
-    (void)a3;
     if (n != 0 && access_ok((const void *)(uintptr_t)dst, (size_t)n, 1) &&
         access_ok((const void *)(uintptr_t)src, (size_t)n, 0))
         memcpy((void *)(uintptr_t)dst, (const void *)(uintptr_t)src, (size_t)n);
@@ -971,8 +854,6 @@ static int64_t win_memcpy(struct ARCH_REGS *r, uint64_t dst, uint64_t src, uint6
 }
 
 static int64_t win_memset(struct ARCH_REGS *r, uint64_t dst, uint64_t c, uint64_t n, uint64_t a3) {
-    (void)r;
-    (void)a3;
     if (n != 0 && access_ok((const void *)(uintptr_t)dst, (size_t)n, 1))
         memset((void *)(uintptr_t)dst, (int32_t)c, (size_t)n);
     return (int64_t)dst;
@@ -982,9 +863,6 @@ static int64_t win_crt_vfprintf(struct ARCH_REGS *r, uint64_t options, uint64_t 
                                 uint64_t fmt, uint64_t locale) {
     struct WIN_VA va;
     uint32_t addr;
-    (void)options;
-    (void)stream;
-    (void)locale;
     addr = (uint32_t)r->user_rsp + WIN_STACK_BASE;
     if (!access_ok((const void *)(uintptr_t)addr, 8, 0))
         return 0;
@@ -997,68 +875,35 @@ static int64_t win_crt_vfprintf(struct ARCH_REGS *r, uint64_t options, uint64_t 
 
 static int64_t win_p___argc(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                             uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_rt_ptr(WIN_RT_ARGC);
 }
 
 static int64_t win_p___argv(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                             uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_rt_ptr(WIN_RT_ARGV);
 }
 
 static int64_t win_p__environ(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                               uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_rt_ptr(WIN_RT_ENVP);
 }
 
 static int64_t win_p__fmode(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                             uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_rt_ptr(WIN_RT_FMODE);
 }
 
 static int64_t win_p__commode(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                               uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_rt_ptr(WIN_RT_COMMODE);
 }
 
 static int64_t win_acrt_iob_func(struct ARCH_REGS *r, uint64_t idx, uint64_t a1, uint64_t a2,
                                  uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return (int64_t)win_rt_ptr(WIN_RT_FILE + (uint32_t)idx * WIN_RT_FILE_STRIDE);
 }
 
 static int64_t win_malloc(struct ARCH_REGS *r, uint64_t n, uint64_t a1, uint64_t a2, uint64_t a3) {
-    (void)r;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     if (n > 0x7fffffffu)
         return 0;
     return (int64_t)win_heap_alloc((uint32_t)n, 0);
@@ -1066,9 +911,6 @@ static int64_t win_malloc(struct ARCH_REGS *r, uint64_t n, uint64_t a1, uint64_t
 
 static int64_t win_calloc(struct ARCH_REGS *r, uint64_t n, uint64_t sz, uint64_t a2, uint64_t a3) {
     uint64_t total = n * sz;
-    (void)r;
-    (void)a2;
-    (void)a3;
     if (sz != 0 && total / sz != n)
         return 0;
     if (total > 0x7fffffffu)
@@ -1077,31 +919,16 @@ static int64_t win_calloc(struct ARCH_REGS *r, uint64_t n, uint64_t sz, uint64_t
 }
 
 static int64_t win_free(struct ARCH_REGS *r, uint64_t p, uint64_t a1, uint64_t a2, uint64_t a3) {
-    (void)r;
-    (void)p;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 0;
 }
 
 static int64_t win_seh_handler(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                                uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     return 1;
 }
 
 static int64_t win_notimpl(struct ARCH_REGS *r, uint64_t a0, uint64_t a1, uint64_t a2,
                            uint64_t a3) {
-    (void)r;
-    (void)a0;
-    (void)a1;
-    (void)a2;
-    (void)a3;
     win_set_last_error_val(WIN_LE_NOT_SUPPORTED);
     return 0;
 }

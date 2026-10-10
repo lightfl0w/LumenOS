@@ -32,42 +32,44 @@ static void rb_rotate_right(struct RB_ROOT *root, struct RB_NODE *node) {
     node->parent = left;
 }
 
+static void rb_fixup_left(struct RB_ROOT *root, struct RB_NODE *node) {
+    struct RB_NODE *grandparent = node->parent->parent;
+    if (node == node->parent->right) {
+        node = node->parent;
+        rb_rotate_left(root, node);
+    }
+    node->parent->color = RB_BLACK;
+    grandparent->color = RB_RED;
+    rb_rotate_right(root, grandparent);
+}
+
+static void rb_fixup_right(struct RB_ROOT *root, struct RB_NODE *node) {
+    struct RB_NODE *grandparent = node->parent->parent;
+    if (node == node->parent->left) {
+        node = node->parent;
+        rb_rotate_right(root, node);
+    }
+    node->parent->color = RB_BLACK;
+    grandparent->color = RB_RED;
+    rb_rotate_left(root, grandparent);
+}
+
 static void rb_insert_fixup(struct RB_ROOT *root, struct RB_NODE *node) {
     while (node->parent && node->parent->color == RB_RED) {
         struct RB_NODE *grandparent = node->parent->parent;
+        struct RB_NODE *uncle = (node->parent == grandparent->left) ? grandparent->right
+                                                                  : grandparent->left;
+        if (uncle && uncle->color == RB_RED) {
+            node->parent->color = RB_BLACK;
+            uncle->color = RB_BLACK;
+            grandparent->color = RB_RED;
+            node = grandparent;
+            continue;
+        }
         if (node->parent == grandparent->left) {
-            struct RB_NODE *uncle = grandparent->right;
-            if (uncle && uncle->color == RB_RED) {
-                node->parent->color = RB_BLACK;
-                uncle->color = RB_BLACK;
-                grandparent->color = RB_RED;
-                node = grandparent;
-            } else {
-                if (node == node->parent->right) {
-                    node = node->parent;
-                    rb_rotate_left(root, node);
-                }
-
-                node->parent->color = RB_BLACK;
-                grandparent->color = RB_RED;
-                rb_rotate_right(root, grandparent);
-            }
+            rb_fixup_left(root, node);
         } else {
-            struct RB_NODE *uncle = grandparent->left;
-            if (uncle && uncle->color == RB_RED) {
-                node->parent->color = RB_BLACK;
-                uncle->color = RB_BLACK;
-                grandparent->color = RB_RED;
-                node = grandparent;
-            } else {
-                if (node == node->parent->left) {
-                    node = node->parent;
-                    rb_rotate_right(root, node);
-                }
-                node->parent->color = RB_BLACK;
-                grandparent->color = RB_RED;
-                rb_rotate_left(root, grandparent);
-            }
+            rb_fixup_right(root, node);
         }
     }
     root->root->color = RB_BLACK;
@@ -107,7 +109,6 @@ struct RB_NODE *rb_insert(struct RB_ROOT *root, struct RB_NODE *node) {
 }
 
 static void rb_erase_fixup(struct RB_ROOT *root, struct RB_NODE *node, struct RB_NODE *parent) {
-    (void)root;
     while ((node == NULL || node->color == RB_BLACK) && parent != NULL) {
         if (parent->left == node) {
             struct RB_NODE *sibling = parent->right;

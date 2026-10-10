@@ -58,7 +58,7 @@ int main(void) {
     fill_zero(&sa, sizeof(sa));
     sa.family = AF_INET;
     sa.port = (uint16_t)((7777u >> 8) | (7777u << 8));
-    sa.ip = 0x0100007Fu; 
+    sa.ip = 0x0100007Fu;
     int32_t r = raw_sys4(NR_bind, (uint32_t)fd, (uint32_t)&sa, 16, 0);
     printf("bind -> %d\n", r);
 

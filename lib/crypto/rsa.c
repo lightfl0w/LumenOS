@@ -325,17 +325,19 @@ static int rsa_pss_check(const uint8_t *em, uint32_t n_len, int mod_bits, const 
     return 1;
 }
 
+static int byte_bitlen(uint8_t v) {
+    int b = 0;
+    while (v) {
+        b++;
+        v = (uint8_t)(v >> 1);
+    }
+    return b;
+}
+
 static int rsa_bitlen(const uint8_t *n, uint32_t n_len) {
-    uint32_t i;
-    for (i = 0; i < n_len; i++) {
+    for (uint32_t i = 0; i < n_len; i++) {
         if (n[i] != 0) {
-            int b = 0;
-            uint8_t v = n[i];
-            while (v) {
-                b++;
-                v = (uint8_t)(v >> 1);
-            }
-            return (int)((n_len - i - 1) * 8 + (uint32_t)b);
+            return (int)((n_len - i - 1) * 8 + (uint32_t)byte_bitlen(n[i]));
         }
     }
     return 0;

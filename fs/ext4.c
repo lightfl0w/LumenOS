@@ -1,4 +1,6 @@
 #include "fs/ext4.h"
+#include "fs/ext_common.h"
+#include "fs/vfs/vfs.h"
 #include "fs/fs.h"
 #include "kernel/sched/thread.h"
 
@@ -6,7 +8,7 @@
 #include "drivers/char/serial/rtc.h"
 #include "fs/dir.h"
 #include "fs/pbcache.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/sync/sync.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
@@ -49,7 +51,6 @@ static uint32_t free_blocks = 0;
 static uint32_t free_inodes = 0;
 static uint32_t csum_seed = 0;
 static int has_csum = 0;
-static int has_64bit = 0;
 static int has_journal = 0;
 
 static uint8_t uuid[16];
@@ -151,19 +152,7 @@ static int ext4_raw_write(uint32_t blk, const void *buf) {
 }
 
 static int ext4_read_blocks(uint32_t blk, uint32_t cnt, void *buf) {
-    if (disk == NULL) {
-        return -1;
-    }
-    if (blk >= total_blocks && total_blocks != 0) {
-        return -1;
-    }
-    if (cnt == 0) {
-        return 0;
-    }
-    if (blk + cnt > total_blocks && total_blocks != 0) {
-        cnt = total_blocks - blk;
-    }
-    return pbc_read_run(start, blk, cnt, buf);
+    return ext_read_blocks_with("ext4", disk != NULL, total_blocks, start, blk, cnt, buf);
 }
 
 static int jsb_read(uint32_t blk, void *buf) {
@@ -966,7 +955,7 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         if (nx->ee_block == fblk + 1u && st == pblk + 1u && len < 32768u) {
             nx->ee_block = fblk;
             nx->ee_start_lo = pblk;
-            nx->ee_start_hi = (uint16_t)(pblk >> 32);
+            nx->ee_start_hi = (uint16_t)0;
             nx->ee_len = (uint16_t)(len + 1u);
             if (!is_root) {
                 ext_node_csum(ino, p, max);
@@ -996,7 +985,7 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         ne->ee_block = fblk;
         ne->ee_len = 1;
         ne->ee_start_lo = pblk;
-        ne->ee_start_hi = (uint16_t)(pblk >> 32);
+        ne->ee_start_hi = (uint16_t)0;
         for (uint32_t i = pos; i < n; i++) {
             *ext_ent(tmp, i + 1) = *ext_ent(p, i);
         }
@@ -1008,7 +997,7 @@ static int leaf_insert(struct FS_INODE *ino, uint8_t *p, int is_root, uint32_t o
         ne->ee_block = fblk;
         ne->ee_len = 1;
         ne->ee_start_lo = pblk;
-        ne->ee_start_hi = (uint16_t)(pblk >> 32);
+        ne->ee_start_hi = (uint16_t)0;
         h->eh_entries = (uint16_t)total;
         if (!is_root) {
             ext_node_csum(ino, p, max);
@@ -1349,7 +1338,7 @@ static int ext_insert(struct FS_INODE *ino, uint32_t fblk, uint32_t pblk) {
         e->ee_block = fblk;
         e->ee_len = 1;
         e->ee_start_lo = pblk;
-        e->ee_start_hi = (uint16_t)(pblk >> 32);
+        e->ee_start_hi = (uint16_t)0;
         h->eh_entries = 1;
         return 0;
     }
@@ -1375,7 +1364,7 @@ static void ext_free_tree(uint32_t blk, uint8_t *buf) {
                 len -= 32768u;
             }
             uint64_t pb = (uint64_t)e->ee_start_lo | ((uint64_t)e->ee_start_hi << 32);
-                    uint32_t s = (uint32_t)pb;
+            uint32_t s = (uint32_t)pb;
             for (uint32_t k = 0; k < len; k++) {
                 ext4_free_block(s + k);
             }
@@ -1400,6 +1389,7 @@ static void ext_count(uint32_t blk, uint8_t *buf, uint32_t depth, uint32_t *data
         return;
     }
     if (depth == 0) {
+
         for (uint32_t i = 0; i < h->eh_entries; i++) {
             struct EXT4_EXTENT *e = ext_ent(buf, i);
             uint32_t len = e->ee_len;
@@ -1410,6 +1400,7 @@ static void ext_count(uint32_t blk, uint8_t *buf, uint32_t depth, uint32_t *data
         }
         return;
     }
+
     *index += h->eh_entries;
     for (uint32_t i = 0; i < h->eh_entries; i++) {
         struct EXT4_EXTENT_IDX *x = ext_idx(buf, i);
@@ -2118,35 +2109,6 @@ static int ext4_dir_next_impl(const struct FS_INODE *dino, uint32_t *pos, struct
     return -1;
 }
 
-static int ext4_find_in_dir(const struct FS_INODE *dino, const char *name, uint32_t *child,
-                            int *ftype) {
-    uint32_t pos = 0;
-    struct FS_DIRENT de;
-    while (ext4_dir_next_impl(dino, &pos, &de) == 0) {
-        if (strcmp(de.filename, name) == 0) {
-            *child = de.i_no;
-            *ftype = (int)de.f_type;
-            return 0;
-        }
-    }
-    return -1;
-}
-
-static int ext4_read_target(uint32_t ino, char *buf, uint32_t cap) {
-    struct FS_INODE node;
-    if (ext4_read_inode_impl(ino, &node) || (node.i_mode & 0xF000u) != 0xA000u) {
-        return -1;
-    }
-    uint32_t len = node.i_size < cap - 1 ? node.i_size : cap - 1;
-    if (node.i_size < 60u) {
-        memcpy(buf, &node.i_block[0], len);
-    } else if (ext4_read_from_inode_impl(&node, 0, buf, len) != (int)len) {
-        return -1;
-    }
-    buf[len] = 0;
-    return (int)len;
-}
-
 int ext4_abs_path(const char *path, char *out, uint32_t cap) {
     if (path == NULL || path[0] == 0) {
         return -1;
@@ -2205,6 +2167,11 @@ int ext4_lookup_ftype(const char *path, uint32_t *ino, int *ftype, int follow) {
     return rc;
 }
 
+static int ext4_read_target(uint32_t ino, char *buf, uint32_t cap) {
+    return ext_read_link_target_with(ext4_read_inode_impl,
+                                    ext4_read_from_inode_impl, ino, buf, cap);
+}
+
 int ext4_read_link_target(uint32_t ino, char *buf, uint32_t cap) {
     rwlock_read_acquire(&ext4_lock);
     int rc = ext4_read_target(ino, buf, cap);
@@ -2212,99 +2179,19 @@ int ext4_read_link_target(uint32_t ino, char *buf, uint32_t cap) {
     return rc;
 }
 
-static int ext4_lookup_depth(const char *path, uint32_t *ino, int *ftype, int follow, int depth) {
-    if (disk == NULL || path == NULL || path[0] != '/') {
-        return -1;
-    }
-    char cur[MAX_PATH_LEN];
-    uint32_t clen = (uint32_t)strlen(path);
-    if (clen >= MAX_PATH_LEN) {
-        return -1;
-    }
-    memcpy(cur, path, clen + 1);
-    for (;;) {
-        if (--depth < 0) {
-            return -1;
-        }
-        uint32_t cino = 2;
-        int cdir = 1;
-        *ino = 2;
-        *ftype = FT_DIRECTORY;
-        const char *p = cur;
-        while (*p == '/') {
-            p++;
-        }
-        if (*p == 0) {
-            return 0;
-        }
-        struct FS_INODE node;
-        if (ext4_read_inode_impl(2, &node)) {
-            return -1;
-        }
-        for (;;) {
-            const char *cstart = p;
-            char comp[MAX_FILE_NAME_LEN];
-            uint32_t ci = 0;
-            while (*p && *p != '/' && ci < MAX_FILE_NAME_LEN - 1) {
-                comp[ci++] = *p++;
-            }
-            comp[ci] = 0;
-            if (ci == 0) {
-                break;
-            }
-            uint32_t child = 0;
-            int ft = 0;
-            if (ext4_find_in_dir(&node, comp, &child, &ft)) {
-                return -1;
-            }
-            if (ft == FT_SYMLINK) {
-                char tgt[MAX_PATH_LEN];
-                if (!follow || ext4_read_target(child, tgt, MAX_PATH_LEN) < 0) {
-                    *ino = child;
-                    *ftype = ft;
-                    cdir = 0;
-                    return 0;
-                }
-                char np[MAX_PATH_LEN];
-                uint32_t plen = (uint32_t)(cstart - cur);
-                uint32_t tlen = (uint32_t)strlen(tgt);
-                if (tgt[0] == '/') {
-                    plen = 0;
-                } else {
-                    while (plen > 1 && cur[plen - 1] == '/') {
-                        plen--;
-                    }
-                }
-                if (plen + tlen + 2 > MAX_PATH_LEN) {
-                    return -1;
-                }
-                memcpy(np, cur, plen);
-                if (plen > 1 || (plen == 1 && cur[0] != '/')) {
-                    np[plen++] = '/';
-                } else if (plen == 0) {
-                    np[plen++] = '/';
-                }
-                memcpy(np + plen, tgt, tlen + 1);
-                memcpy(cur, np, plen + tlen + 1);
-                break;
-            }
-            cino = child;
-            cdir = (ft == FT_DIRECTORY);
-            while (*p == '/') {
-                p++;
-            }
-            if (*p == 0) {
-                *ino = cino;
-                *ftype = ft;
-                return 0;
-            }
-            if (!cdir || ext4_read_inode_impl(child, &node)) {
-                return -1;
-            }
-        }
-        *ino = cino;
-        *ftype = cdir ? FT_DIRECTORY : FT_REGULAR;
-    }
+static const struct EXT_PATH_OPS ext4_path_ops = {
+    .read_inode = ext4_read_inode_impl,
+    .dir_next = ext4_dir_next_impl,
+    .read_link_target = ext4_read_target,
+    .mounted = 0,
+};
+
+static int ext4_lookup_depth(const char *path, uint32_t *ino, int *ftype, int follow,
+                              int depth) {
+
+    struct EXT_PATH_OPS ops = ext4_path_ops;
+    ops.mounted = disk != NULL;
+    return ext_lookup_depth_with(&ops, path, ino, ftype, follow, depth);
 }
 
 void ext4_statfs_info(uint32_t *bsize, uint32_t *blocks, uint32_t *bfree, uint32_t *files,
@@ -2496,13 +2383,13 @@ int ext4_init(void) {
         memset(buf, 0, 4096);
         BLOCK.read_sectors(p->my_disk, p->start_lba, buf, 4);
         uint8_t *sb = buf + 1024;
-        if (ld16(sb + 0x38) != EXT4_SUPER_MAGIC) {
+        if (ld16(sb + EXT4_SB_MAGIC_OFF) != EXT4_SUPER_MAGIC) {
             free_kernel_page((uint32_t)buf);
             e = e->next;
             continue;
         }
-        uint32_t incompat = ld32(sb + 0x60);
-        uint32_t ro = ld32(sb + 0x64);
+        uint32_t incompat = ld32(sb + EXT4_SB_INCOMPAT_OFF);
+        uint32_t ro = ld32(sb + EXT4_SB_RO_COMPAT_OFF);
         if ((incompat & ~EXT4_FEATURE_SUPPORTED_INCOMPAT) || (ro & ~EXT4_FEATURE_SUPPORTED_RO)) {
             free_kernel_page((uint32_t)buf);
             e = e->next;
@@ -2529,7 +2416,6 @@ int ext4_init(void) {
         if (inode_size == 0) {
             inode_size = 128;
         }
-        has_64bit = (incompat & EXT4_FEATURE_INCOMPAT_64BIT) != 0;
         has_csum = (ro & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) != 0;
         memcpy(uuid, g_sb + 0x68, 16);
         if (incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED) {
@@ -2571,3 +2457,24 @@ int ext4_init(void) {
     kprintf("ext4: no ext4 filesystem found\n");
     return -1;
 }
+
+static const struct VFS_OPS ext4_vfs_ops = {
+    ext4_init,           ext4_partition,        ext4_lookup,     ext4_lookup_ftype,
+    ext4_abs_path,       ext4_read_link_target, ext4_read_inode, ext4_read_from_inode,
+    ext4_dir_next,       ext4_new_inode,        ext4_free_inode, ext4_write_inode,
+    ext4_write_to_inode, ext4_truncate_inode,   ext4_add_entry,  ext4_add_entry_dt,
+    ext4_remove_entry,   ext4_statfs_info,
+};
+
+static int ext4_probe_sb(const uint8_t *sb) {
+    if (*(const uint16_t *)(sb + EXT4_SB_MAGIC_OFF) != EXT4_SUPER_MAGIC) {
+        return 0;
+    }
+    uint32_t incompat = *(const uint32_t *)(sb + EXT4_SB_INCOMPAT_OFF);
+    uint32_t ro_compat = *(const uint32_t *)(sb + EXT4_SB_RO_COMPAT_OFF);
+
+    return (incompat & (EXT4_FEATURE_INCOMPAT_EXTENTS | EXT4_FEATURE_INCOMPAT_64BIT)) != 0 ||
+           (ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) != 0;
+}
+
+VFS_REGISTER("ext4", &ext4_vfs_ops, ext4_probe_sb);

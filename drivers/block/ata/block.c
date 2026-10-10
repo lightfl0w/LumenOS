@@ -66,25 +66,26 @@ static void scan_partitions(struct DISK *hd, uint32_t ext_lba) {
         return;
     }
     BLOCK.read_sectors(hd, ext_lba, bs, 1);
+    int primary = (ext_lba == 0);
     struct DISK_PART_ENTRY *p = bs->partition_table;
     for (uint32_t i = 0; i < 4; i++, p++) {
         if (p->fs_type == 0x5) {
-            if (ext_lba == 0) {
+
+            if (primary) {
                 ext_lba_base = p->start_lba;
                 scan_partitions(hd, p->start_lba);
             } else {
                 scan_partitions(hd, p->start_lba + ext_lba_base);
             }
-        } else if (p->fs_type != 0) {
-            if (ext_lba == 0) {
-                register_partition(hd, p->start_lba, p->sec_cnt, 0);
-            } else {
-                register_partition(hd, p->start_lba, p->sec_cnt, 1);
-                if (logic_nr >= 8) {
-                    free_kernel_page((uint32_t)bs);
-                    return;
-                }
-            }
+            continue;
+        }
+        if (p->fs_type == 0) {
+            continue;
+        }
+        register_partition(hd, p->start_lba, p->sec_cnt, primary ? 0 : 1);
+        if (!primary && logic_nr >= 8) {
+            free_kernel_page((uint32_t)bs);
+            return;
         }
     }
     free_kernel_page((uint32_t)bs);

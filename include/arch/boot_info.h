@@ -2,10 +2,20 @@
 #define KERNEL_BOOT_INFO_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define BOOT_MEM_AVAILABLE 1
 
 #define BOOT_MAX_MMAP 64
+
+#define FB_WINDOW_VIRT        0x80000000UL
+#define FB_WINDOW_2M_MASK     0xFFE00000UL
+#define FB_WINDOW_OFFSET_MASK 0x1FFFFFUL
+#define FB_WINDOW_FB_PAGES    8UL
+
+static inline uintptr_t fb_window_virt(uint64_t fb_phys) {
+    return (uintptr_t)FB_WINDOW_VIRT + ((uintptr_t)fb_phys & FB_WINDOW_OFFSET_MASK);
+}
 
 struct BOOT_MMAP_ENTRY {
     uint64_t addr;

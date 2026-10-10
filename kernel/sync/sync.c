@@ -1,7 +1,7 @@
 #include "kernel/sync/sync.h"
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/sched/thread.h"
 void spinlock_init(struct SCHED_SPINLOCK *s) {
     s->locked = 0;

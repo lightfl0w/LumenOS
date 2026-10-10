@@ -1,7 +1,7 @@
 #include "drivers/net/rtl8139/rtl8139.h"
 
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 
@@ -89,7 +89,6 @@ static int rtl8139_tx_wait(uint32_t slot) {
 }
 
 int rtl8139_tx(NETIF *ifp, const void *frame, uint32_t len) {
-    (void)ifp;
     outl(ioaddr + REG_TSAD0 + tx_slot * 4, V2P(frame));
     outl(ioaddr + REG_TSD0 + tx_slot * 4, len);
 
@@ -99,7 +98,6 @@ int rtl8139_tx(NETIF *ifp, const void *frame, uint32_t len) {
 }
 
 int rtl8139_rx(NETIF *ifp, void *buf, uint32_t maxlen) {
-    (void)ifp;
     uint16_t st = *(uint16_t *)(rx_buffer + rx_cur);
     if (!(st & 0x0001))
         return 0;

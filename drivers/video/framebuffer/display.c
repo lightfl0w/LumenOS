@@ -2,7 +2,7 @@
 
 #include "drivers/char/serial/console/io.h"
 #include "drivers/video/framebuffer/udi.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "mm/pool.h"
 
 static struct GFX_CANVAS back;
@@ -44,7 +44,6 @@ static int udi_disp_init(void) {
 }
 
 static struct GFX_CANVAS *udi_disp_surface(int which) {
-    (void)which;
     return &back;
 }
 
@@ -62,9 +61,6 @@ static void udi_disp_wait_vblank(void) {
 }
 
 static int udi_disp_set_mode(uint32_t w, uint32_t h, uint32_t bpp) {
-    (void)w;
-    (void)h;
-    (void)bpp;
     return -1;
 }
 

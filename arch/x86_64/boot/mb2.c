@@ -1,5 +1,5 @@
 #include "arch/x86_64/boot/mb2.h"
-#include "drivers/char/serial/console/io.h"
+#include "lib/printf/printf.h"
 #include "lib/string/str.h"
 static struct MB2_INFO g_mb2;
 static void parse_tag(const struct MB2_TAG *tag) {

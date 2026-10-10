@@ -90,7 +90,7 @@ int main(void) {
         struct timespec ts = {0, 20000000};
         for (int i = 0; i < 500; i++)
             nanosleep(&ts, NULL);
-        _exit(0x11); 
+        _exit(0x11);
     }
 
     close(s);

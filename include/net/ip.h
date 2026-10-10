@@ -29,9 +29,25 @@ static inline void net_put32(uint8_t *p, uint32_t v) {
     p[3] = (uint8_t)v;
 }
 
+uint32_t net_csum_add(uint32_t sum, const void *data, uint32_t len);
+uint16_t net_csum_fold(uint32_t sum);
 uint16_t ip_csum(const void *data, uint32_t len);
 void ip_input(NETIF *ifp, const uint8_t *pkt, uint32_t len);
 int ip_output(NETIF *ifp, uint32_t daddr, uint8_t proto, const void *data, uint32_t len);
 void ip_arp_resolved(NETIF *ifp, uint32_t ip, const uint8_t *mac);
+
+struct IP_PROTO {
+    uint8_t proto;
+    void (*input)(NETIF *ifp, uint32_t saddr, const uint8_t *payload, uint32_t len);
+    const char *name;
+};
+
+extern const struct IP_PROTO __net_ipproto_start[];
+extern const struct IP_PROTO __net_ipproto_end[];
+
+#define IP_PROTO_REGISTER(proto_val, fn, name_str)                               \
+    static const struct IP_PROTO __ipproto_##fn                                  \
+        __attribute__((used, section(".net_ipproto"))) = {                          \
+            .proto = (uint8_t)(proto_val), .input = (fn), .name = (name_str) }
 
 #endif

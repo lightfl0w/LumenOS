@@ -2,6 +2,7 @@
 #define ARCH_X86_UEFI_LOADER_H
 #include "arch/x86_64/boot/mb2.h"
 #include "arch/x86_64/boot/uefi/efi.h"
+#include "arch/boot_info.h"
 #include <stdint.h>
 #ifndef NULL
 #define NULL ((void *)0)
@@ -22,6 +23,7 @@ void *memset(void *dst, int value, uint64_t len);
 #define EFI_PD_LO_PHYS 0x92000ull
 #define EFI_PD_VRAM_PHYS 0x94000ull
 #define EFI_PD_MMIO_PHYS 0x96000ull
+
 #define EFI_PD_HI_PHYS 0x98000ull
 #define EFI_KERNEL_PHYS 0x280000ull
 #define EFI_KERNEL_BASE_PHYS 0x200000ull
@@ -34,8 +36,9 @@ void *memset(void *dst, int value, uint64_t len);
 #define EFI_PD_ENTRIES 512ull
 #define EFI_IOAPIC_PHYS 0xFEC00000ull
 #define EFI_LAPIC_PHYS 0xFEE00000ull
-#define EFI_VRAM_2M_MASK 0xFFE00000ull
-#define EFI_VRAM_PAGES 8ull
+
+#define EFI_VRAM_2M_MASK FB_WINDOW_2M_MASK
+#define EFI_VRAM_PAGES  FB_WINDOW_FB_PAGES
 #define EFI_MMAP_BUFFER_SIZE 65536ull
 #define EFI_MBI_MAX_BYTES 4096ull
 #define EFI_MAP_LIMIT 0x20000000ull

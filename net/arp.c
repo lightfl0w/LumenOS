@@ -106,8 +106,9 @@ int arp_resolve(NETIF *ifp, uint32_t ip, uint8_t *out_mac) {
 }
 
 void arp_tick(NETIF *ifp) {
-    (void)ifp;
     lock_acquire(&net_lock);
     s_tick++;
     lock_release(&net_lock);
 }
+
+ETH_PROTO_REGISTER(ETH_ARP, arp_input, "arp");

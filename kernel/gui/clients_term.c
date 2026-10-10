@@ -85,7 +85,6 @@ static void term_render(struct COMP_DEMO_CLIENT *dc) {
 }
 
 static void term_on_key(struct COMP_DEMO_CLIENT *dc, int scancode, int mods) {
-    (void)mods;
     char ch = keyboard_translate((uint8_t)scancode, mods & MOD_SHIFT);
     if (!ch)
         return;
@@ -102,7 +101,6 @@ static const struct CLIENT_DESC term_desc = {"term", "term - wayland-ish client"
                                              term_on_key, 30};
 
 void clients_term_thread(void *arg) {
-    (void)arg;
     struct COMP_DEMO_CLIENT dc;
     memset(&dc, 0, sizeof(dc));
     if (client_begin(&dc, &term_desc) != 0) {

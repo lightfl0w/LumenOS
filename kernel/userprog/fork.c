@@ -2,8 +2,8 @@
 #include "arch/syscall/entry.h"
 #include "drivers/char/serial/console/io.h"
 #include "fs/file.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
@@ -24,7 +24,23 @@ static void mark_child_bitmap(struct TASK *child, uint32_t vaddr) {
 static int cow_vaddr_ok(uint32_t vaddr) {
     return vaddr >= USER_EXEC64_FLOOR &&
            !(vaddr >= KERNEL_VADDR_START && vaddr < KERNEL_VADDR_START + KERNEL_VADDR_SIZE) &&
-           vaddr < 0xc0000000;
+           vaddr < USER_STACK_TOP;
+}
+
+static int alloc_child_pd(uint64_t *pd, uint64_t *child_pd) {
+    for (uint32_t pd_idx = 0; pd_idx < 512; pd_idx++) {
+        uint64_t pd_e = pd[pd_idx];
+        if (!(pd_e & PTE_P) || (pd_e & PTE_PS)) {
+            continue;
+        }
+        uint32_t child_tbl = (uint32_t)palloc(&kernel_pool);
+        if (child_tbl == 0) {
+            return -1;
+        }
+        memset((void *)VIRT_OF(child_tbl), 0, PAGE_SIZE);
+        child_pd[pd_idx] = (uint64_t)child_tbl | (pd_e & 0xfff);
+    }
+    return 0;
 }
 
 static int alloc_child_page_tables(struct TASK *child, uint64_t *pdp, uint64_t *child_pdp) {
@@ -33,26 +49,52 @@ static int alloc_child_page_tables(struct TASK *child, uint64_t *pdp, uint64_t *
         if (!(pdp_e & PTE_P) || (pdp_e & PTE_PS)) {
             continue;
         }
-        uint64_t *pd = (uint64_t *)VIRT_OF(PTE_PHYS(pdp_e));
         uint64_t child_pdp_e = child_pdp[pdp_idx];
         if (!(child_pdp_e & PTE_P) || child_pdp_e == pdp_e) {
             continue;
         }
-        uint64_t *child_pd = (uint64_t *)VIRT_OF(PTE_PHYS(child_pdp_e));
-        for (uint32_t pd_idx = 0; pd_idx < 512; pd_idx++) {
-            uint64_t pd_e = pd[pd_idx];
-            if (!(pd_e & PTE_P) || (pd_e & PTE_PS)) {
-                continue;
-            }
-            uint32_t child_tbl = (uint32_t)palloc(&kernel_pool);
-            if (child_tbl == 0) {
-                return -1;
-            }
-            memset((void *)VIRT_OF(child_tbl), 0, PAGE_SIZE);
-            child_pd[pd_idx] = (uint64_t)child_tbl | (pd_e & 0xfff);
+        if (alloc_child_pd((uint64_t *)VIRT_OF(PTE_PHYS(pdp_e)),
+                           (uint64_t *)VIRT_OF(PTE_PHYS(child_pdp_e))) != 0) {
+            return -1;
         }
     }
     return 0;
+}
+
+static void cow_share_pte(uint64_t *pt, uint64_t *child_pt, uint32_t pte_idx,
+                          uint32_t vaddr, uint64_t pte, struct TASK *child) {
+    if (!cow_vaddr_ok(vaddr)) {
+        return;
+    }
+    uint32_t src_phy = (uint32_t)PTE_PHYS(pte);
+    page_cow_share(src_phy);
+    pt[pte_idx] = (pte & ~(uint64_t)PTE_W) | COW_FLAG;
+    arch_tlb_flush(vaddr);
+    mark_child_bitmap(child, vaddr);
+    child_pt[pte_idx] = (uint64_t)src_phy | (pte & (PTE_P | PTE_U | PTE_NX | 0x0f0)) | COW_FLAG;
+}
+
+static void share_user_pt(uint64_t *pt, uint64_t *child_pt, uint32_t pdp_idx, uint32_t pd_idx,
+                          struct TASK *child) {
+    for (uint32_t pte_idx = 0; pte_idx < 512; pte_idx++) {
+        uint64_t pte = pt[pte_idx];
+        if (!(pte & PTE_P)) {
+            continue;
+        }
+        uint32_t vaddr = (pdp_idx << 30) + (pd_idx << 21) + (pte_idx << 12);
+        cow_share_pte(pt, child_pt, pte_idx, vaddr, pte, child);
+    }
+}
+
+static void share_user_pd(uint64_t *pd, uint64_t *child_pd, uint32_t pdp_idx, struct TASK *child) {
+    for (uint32_t pd_idx = 0; pd_idx < 512; pd_idx++) {
+        uint64_t pd_e = pd[pd_idx];
+        if (!(pd_e & PTE_P) || (pd_e & PTE_PS)) {
+            continue;
+        }
+        share_user_pt((uint64_t *)VIRT_OF(PTE_PHYS(pd_e)), (uint64_t *)VIRT_OF(PTE_PHYS(child_pd[pd_idx])),
+                      pdp_idx, pd_idx, child);
+    }
 }
 
 static void share_user_space_cow(struct TASK *child, uint64_t *pdp, uint64_t *child_pdp) {
@@ -61,37 +103,12 @@ static void share_user_space_cow(struct TASK *child, uint64_t *pdp, uint64_t *ch
         if (!(pdp_e & PTE_P) || (pdp_e & PTE_PS)) {
             continue;
         }
-        uint64_t *pd = (uint64_t *)VIRT_OF(PTE_PHYS(pdp_e));
         uint64_t child_pdp_e = child_pdp[pdp_idx];
         if (!(child_pdp_e & PTE_P) || child_pdp_e == pdp_e) {
             continue;
         }
-        uint64_t *child_pd = (uint64_t *)VIRT_OF(PTE_PHYS(child_pdp_e));
-        for (uint32_t pd_idx = 0; pd_idx < 512; pd_idx++) {
-            uint64_t pd_e = pd[pd_idx];
-            if (!(pd_e & PTE_P) || (pd_e & PTE_PS)) {
-                continue;
-            }
-            uint64_t *pt = (uint64_t *)VIRT_OF(PTE_PHYS(pd_e));
-            uint64_t *child_pt = (uint64_t *)VIRT_OF(PTE_PHYS(child_pd[pd_idx]));
-            for (uint32_t pte_idx = 0; pte_idx < 512; pte_idx++) {
-                uint64_t pte = pt[pte_idx];
-                if (!(pte & PTE_P)) {
-                    continue;
-                }
-                uint32_t vaddr = (pdp_idx << 30) + (pd_idx << 21) + (pte_idx << 12);
-                if (!cow_vaddr_ok(vaddr)) {
-                    continue;
-                }
-                uint32_t src_phy = (uint32_t)PTE_PHYS(pte);
-                page_cow_share(src_phy);
-                pt[pte_idx] = (pte & ~(uint64_t)PTE_W) | COW_FLAG;
-                arch_tlb_flush(vaddr);
-                mark_child_bitmap(child, vaddr);
-                child_pt[pte_idx] =
-                    (uint64_t)src_phy | (pte & (PTE_P | PTE_U | PTE_NX | 0x0f0)) | COW_FLAG;
-            }
-        }
+        share_user_pd((uint64_t *)VIRT_OF(PTE_PHYS(pdp_e)),
+                      (uint64_t *)VIRT_OF(PTE_PHYS(child_pdp_e)), pdp_idx, child);
     }
 }
 
@@ -116,19 +133,6 @@ int copy_user_space(struct TASK *parent, struct TASK *child) {
     share_user_space_cow(child, pdp, child_pdp);
     preempt_enable();
     return 0;
-}
-
-static void build_child_stack(struct TASK *child, struct ARCH_REGS *parent_frame) {
-    uint32_t stack_top = (uint32_t)child->kernel_stack_top;
-    struct ARCH_REGS *child_frame = (struct ARCH_REGS *)(stack_top - sizeof(struct ARCH_REGS));
-    memcpy(child_frame, parent_frame, sizeof(struct ARCH_REGS));
-    child_frame->eax = 0;
-    struct TASK_STACK *ts =
-        (struct TASK_STACK *)((uint8_t *)child_frame - sizeof(struct TASK_STACK));
-    memset(ts, 0, sizeof(struct TASK_STACK));
-    ts->rflags = RFLAGS_INIT;
-    ts->rip = (void (*)(void))arch_thread_entry();
-    child->self_kstack = (uint64_t *)ts;
 }
 
 pid_t sys_fork(struct ARCH_REGS *r) {
@@ -182,7 +186,8 @@ pid_t sys_fork(struct ARCH_REGS *r) {
     if (copy_user_space(parent, child) != 0) {
         goto fork_fail;
     }
-    build_child_stack(child, r);
+
+    thread_build_child_stack(child, r, (uint32_t)r->user_rsp);
     child->status = TASK_BLOCKED;
     if (foreground_pid == parent->pid) {
         foreground_pid = child->pid;

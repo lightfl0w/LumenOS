@@ -170,7 +170,6 @@ static int vr_setup_rx(void) {
 }
 
 int virtio_net_tx(NETIF *ifp, const void *frame, uint32_t len) {
-    (void)ifp;
     if (len > VR_BUF_LEN - VR_HDR_LEN) {
         len = VR_BUF_LEN - VR_HDR_LEN;
     }
@@ -199,7 +198,6 @@ int virtio_net_tx(NETIF *ifp, const void *frame, uint32_t len) {
 }
 
 int virtio_net_rx(NETIF *ifp, void *buf, uint32_t maxlen) {
-    (void)ifp;
     if (s_rxq.consumed == *s_rxq.used_idx) {
         return 0;
     }

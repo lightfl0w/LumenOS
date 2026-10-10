@@ -6,7 +6,7 @@
 #include "drivers/net/e1000/e1000.h"
 #include "drivers/net/rtl8139/rtl8139.h"
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 #include "net/arp.h"
 #include "net/eth.h"
@@ -47,7 +47,6 @@ static void net_rx(NETIF *ifp) {
 }
 
 static void net_thread(void *arg) {
-    (void)arg;
     memset(&g_netif, 0, sizeof g_netif);
     g_netif.ip = 0x0A00020F;
     g_netif.mask = 0xFFFFFF00;

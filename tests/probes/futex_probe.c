@@ -18,14 +18,12 @@ static void sleep_ms(uint32_t ms) {
 }
 
 static int wait_a(void *arg) {
-    (void)arg;
     futex((uint32_t)(uintptr_t)&g_words[0], FUTEX_WAIT, 0x1111u, 0);
     g_a_woke = 1;
     return 0;
 }
 
 static int wait_b(void *arg) {
-    (void)arg;
     futex((uint32_t)(uintptr_t)&g_words[64], FUTEX_WAIT, 0x2222u, 0);
     g_b_woke = 1;
     return 0;

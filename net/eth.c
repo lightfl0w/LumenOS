@@ -35,13 +35,11 @@ void eth_input(NETIF *ifp, const void *frame, uint32_t len) {
 
     uint32_t plen = len - ETH_HDR_LEN;
     const uint8_t *p = f + ETH_HDR_LEN;
-    switch (type) {
-    case ETH_ARP:
-        arp_input(ifp, p, plen);
-        break;
-    case ETH_IP:
-        ip_input(ifp, p, plen);
-        break;
+    for (const struct ETH_PROTO *r = __net_ethproto_start; r < __net_ethproto_end; r++) {
+        if (r->ethertype == type) {
+            r->input(ifp, p, plen);
+            return;
+        }
     }
 }
 

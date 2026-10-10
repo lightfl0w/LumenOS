@@ -1,7 +1,7 @@
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 
 #include "arch/interrupt/interrupt.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
 
 #define PIT_BASE_FREQ 1193182

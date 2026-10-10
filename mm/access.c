@@ -1,6 +1,7 @@
 #include "mm/access.h"
 #include "kernel/userprog/process.h"
 #include "lib/string/str.h"
+#include "arch/mmu.h"
 #include "mm/pool.h"
 #define USER_VADDR_BEGIN USER_EXEC64_FLOOR
 static int user_range_walk(uint32_t addr, uint32_t len, int write);
@@ -56,12 +57,13 @@ static int user_str_span(const char *src, uint32_t max, char *dst) {
         if (!user_page_readable(va)) {
             return -1;
         }
+
         uint32_t room = PAGE_SIZE - (va & 0xFFFu);
         uint32_t n = (room < max - off) ? room : (max - off);
         const char *s = (const char *)(uintptr_t)va;
         for (uint32_t i = 0; i < n; i++) {
             char c = s[i];
-            if (dst) {
+            if (dst != NULL) {
                 dst[off + i] = c;
             }
             if (c == 0) {
@@ -125,6 +127,26 @@ int copy_to_user(void *udst, const void *src, uint32_t len) {
 int user_strnlen(const char *src, uint32_t max) {
     return user_str_span(src, max, NULL);
 }
+
+static int page_accessible(uint32_t page, int write) {
+    uint64_t *pde = pde_ptr(page);
+    if (pde == NULL || !(*pde & PTE_P)) {
+        return 0;
+    }
+    if (*pde & PTE_PS) {
+        uint64_t need = PTE_U | (write ? PTE_W : 0);
+        return (*pde & need) == need;
+    }
+    uint64_t *pte = pte_ptr(page);
+    if (!(*pte & PTE_P) || !(*pte & PTE_U)) {
+        return 0;
+    }
+    if (!write || (*pte & PTE_W)) {
+        return 1;
+    }
+    return (*pte & COW_FLAG) != 0 && page_cow_resolve(page, *pte) != 0;
+}
+
 static int user_range_walk(uint32_t addr, uint32_t len, int write) {
     if (addr < USER_VADDR_BEGIN || len == 0 || len > USER_SPACE_END - USER_VADDR_BEGIN ||
         addr > USER_SPACE_END - len) {
@@ -133,23 +155,8 @@ static int user_range_walk(uint32_t addr, uint32_t len, int write) {
     uint32_t first = addr & ~0xFFFu;
     uint32_t last = (addr + len - 1) & ~0xFFFu;
     for (uint32_t page = first;; page += PAGE_SIZE) {
-        uint64_t *pde = pde_ptr(page);
-        if (pde == NULL || !(*pde & PTE_P)) {
+        if (!page_accessible(page, write)) {
             return 0;
-        }
-        if (*pde & PTE_PS) {
-            uint64_t need = PTE_U | (write ? PTE_W : 0);
-            if ((*pde & need) != need) {
-                return 0;
-            }
-        } else {
-            uint64_t *pte = pte_ptr(page);
-            if (!(*pte & PTE_P) || !(*pte & PTE_U)) {
-                return 0;
-            }
-            if (write && !(*pte & PTE_W) && (!(*pte & COW_FLAG) || !page_cow_resolve(page, *pte))) {
-                return 0;
-            }
         }
         if (page == last) {
             return 1;
@@ -161,4 +168,15 @@ int user_range_readable(uint32_t addr, uint32_t len) {
 }
 int user_range_writable(uint32_t addr, uint32_t len) {
     return user_range_walk(addr, len, 1);
+}
+
+void mm_make_user_rx(uint32_t base, uint32_t pages) {
+    for (uint32_t i = 0; i < pages; i++) {
+        uint32_t pg = base + i * PAGE_SIZE;
+        uint64_t *pte = pte_ptr(pg);
+        if (pte != NULL && (*pte & PTE_P)) {
+            *pte = (*pte & 0x000ffffffffff000ull) | pte_wx(PTE_P | PTE_U, 0, 1);
+            arch_tlb_flush(pg);
+        }
+    }
 }

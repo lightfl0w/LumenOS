@@ -4,7 +4,7 @@
 #include "fs/fs.h"
 #include "fs/inode.h"
 #include "fs/vfs/vfs.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
 #include "lib/rand/rand.h"
@@ -183,5 +183,4 @@ uint32_t file_write(struct FILE *file, const void *buf, uint32_t count) {
     return (uint32_t)r;
 }
 __attribute__((weak)) void flock_release_ino(uint32_t ino) {
-    (void)ino;
 }

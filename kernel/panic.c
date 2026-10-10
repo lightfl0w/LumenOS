@@ -1,7 +1,7 @@
-#include "kernel/assert.h"
+#include "lib/assert.h"
 
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 
 void assert_fail(const char *expr, const char *file, int line) {
     set_text_color(12);
