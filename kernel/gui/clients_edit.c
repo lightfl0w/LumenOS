@@ -194,7 +194,6 @@ static void edit_on_key(struct COMP_DEMO_CLIENT *dc, int sc, int mods) {
 static const struct CLIENT_DESC edit_desc = {"edit", "edit", edit_render, edit_on_key, 1000000};
 
 void clients_edit_thread(void *arg) {
-    (void)arg;
     struct EDIT_STATE ed;
     memset(&ed, 0, sizeof(ed));
     edit_load(&ed);

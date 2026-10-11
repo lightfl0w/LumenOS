@@ -36,7 +36,6 @@ static void x11_serve_conn(int cfd) {
 }
 
 static void x11_server_thread(void *arg) {
-    (void)arg;
     int sfd = net_socket(AF_INET, SOCK_STREAM, 0);
     if (sfd < 0) {
         kprintf("x11gw: socket failed\n");

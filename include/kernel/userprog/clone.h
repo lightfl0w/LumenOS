@@ -1,7 +1,7 @@
 #ifndef CLONE_H
 #define CLONE_H
 
-#include "kernel/asm/stub.h"
+#include "arch/asm/stub.h"
 #include "kernel/sched/thread.h"
 #include <stdint.h>
 

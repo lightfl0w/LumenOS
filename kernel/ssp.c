@@ -1,7 +1,7 @@
 #include "kernel/ssp.h"
 
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
 #include "lib/rand/rand.h"
 

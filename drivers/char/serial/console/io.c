@@ -2,7 +2,7 @@
 
 #include <stdarg.h>
 
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sync/sync.h"
 #include "lib/printf/printf.h"
 #include "lib/ttf/ttf.h"
@@ -205,7 +205,6 @@ static struct SCHED_SPINLOCK console_lock;
 static int g_verbose;
 
 static void console_emit(void *ctx, char c) {
-    (void)ctx;
     putc(c);
 }
 
@@ -526,7 +525,6 @@ static void vt_sgr(void) {
 }
 
 static void vt_mode(int set) {
-    (void)set;
     for (uint8_t i = 0; i < vt_nargs; i++) {
         if (vt_args[i] == 1049) {
             vt_fill(0, 0, scrnx, scrny, vt_bg);

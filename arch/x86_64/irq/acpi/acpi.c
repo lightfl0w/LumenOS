@@ -1,7 +1,7 @@
 #include "arch/x86_64/irq/acpi.h"
 #include "arch/x86_64/boot/mb2.h"
-#include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "lib/printf/printf.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 
@@ -108,11 +108,12 @@ static struct ACPI_RSDP *acpi_find_rsdp(void) {
 
     for (uintptr_t off = 0; off < 0x20000; off += 16) {
         struct ACPI_RSDP *rsdp = (struct ACPI_RSDP *)((uint8_t *)ebda + off);
-        if (memcmp(rsdp->signature, "RSD PTR ", 8) == 0) {
-            uint32_t len = (rsdp->revision == 0) ? 20 : rsdp->len;
-            if (acpi_checksum((unsigned char *)rsdp, len)) {
-                return rsdp;
-            }
+        if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0) {
+            continue;
+        }
+        uint32_t len = (rsdp->revision == 0) ? 20 : rsdp->len;
+        if (acpi_checksum((unsigned char *)rsdp, len)) {
+            return rsdp;
         }
     }
     return NULL;

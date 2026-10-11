@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #include "lib/string/str.h"
-#include "mm/pool.h"
+#include "lib/memdef.h"
 
 #define PNG_MAXBITS 15
 #define PNG_SIG_LEN 8
@@ -505,7 +505,7 @@ int png_decode(const void *data, uint32_t len, struct PNG_IMAGE *out) {
     const uint8_t *p = (const uint8_t *)data;
     uint32_t off, idat_total = 0, idat_got = 0;
     int w = 0, h = 0, depth = 0, color = 0, interlace = 0;
-    int have_ihdr = 0, have_plte = 0, have_trns = 0, have_iend = 0;
+    int have_ihdr = 0, have_plte = 0, have_trns = 0;
     uint8_t *raw = 0, *idat = 0;
     uint32_t rowbytes, raw_size, got = 0;
     int bpp, channels;
@@ -562,14 +562,12 @@ int png_decode(const void *data, uint32_t len, struct PNG_IMAGE *out) {
                 return PNG_ERR_FORMAT;
             idat_total += clen;
         } else if (memcmp(type, "IEND", 4) == 0) {
-            have_iend = 1;
             break;
         }
         off += 12 + clen;
     }
     if (!have_ihdr || idat_total == 0)
         return PNG_ERR_FORMAT;
-    (void)have_iend;
     if (color == 3 && !have_plte)
         return PNG_ERR_FORMAT;
 

@@ -2,29 +2,14 @@
 #include "arch/syscall/entry.h"
 #include "drivers/char/serial/console/io.h"
 #include "fs/file.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
 #include "kernel/userprog/fork.h"
 #include "kernel/userprog/process.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
-
-static void build_clone_stack(struct TASK *child, struct ARCH_REGS *parent_frame,
-                              uint32_t user_stack) {
-    uint32_t stack_top = (uint32_t)child->kernel_stack_top;
-    struct ARCH_REGS *child_frame = (struct ARCH_REGS *)(stack_top - sizeof(struct ARCH_REGS));
-    memcpy(child_frame, parent_frame, sizeof(struct ARCH_REGS));
-    child_frame->eax = 0;
-    child_frame->user_esp = user_stack;
-    struct TASK_STACK *ts =
-        (struct TASK_STACK *)((uint8_t *)child_frame - sizeof(struct TASK_STACK));
-    memset(ts, 0, sizeof(struct TASK_STACK));
-    ts->rflags = RFLAGS_INIT;
-    ts->rip = (void (*)(void))arch_thread_entry();
-    child->self_kstack = (uint64_t *)ts;
-}
 
 pid_t sys_clone_ex(uint32_t flags, uint32_t child_user_stack, uint32_t tls, struct ARCH_REGS *r);
 pid_t sys_clone(struct ARCH_REGS *r) {
@@ -132,7 +117,7 @@ pid_t sys_clone_ex(uint32_t flags, uint32_t child_user_stack, uint32_t tls, stru
             child_user_stack = (uint32_t)r->user_esp;
         }
     }
-    build_clone_stack(child, r, child_user_stack);
+    thread_build_child_stack(child, r, child_user_stack);
     child->status = TASK_BLOCKED;
     thread_ready(child);
     return (pid_t)child->pid;

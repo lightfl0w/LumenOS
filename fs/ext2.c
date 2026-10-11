@@ -2,6 +2,8 @@
 #include "drivers/char/serial/console/io.h"
 #include "drivers/char/serial/rtc.h"
 #include "fs/dir.h"
+#include "fs/ext_common.h"
+#include "fs/vfs/vfs.h"
 #include "fs/fs.h"
 #include "fs/pbcache.h"
 #include "kernel/sched/thread.h"
@@ -55,20 +57,7 @@ static int ext2_write_block(uint32_t blk, const void *buf) {
     return pbc_write(start, blk, buf);
 }
 static int ext2_read_blocks(uint32_t blk, uint32_t cnt, void *buf) {
-    if (disk == NULL) {
-        return -1;
-    }
-    if (blk >= total_blocks && total_blocks != 0) {
-        kprintf("[ext2] read out-of-range block %d (total %d)\n", blk, total_blocks);
-        return -1;
-    }
-    if (cnt == 0) {
-        return 0;
-    }
-    if (blk + cnt > total_blocks && total_blocks != 0) {
-        cnt = total_blocks - blk;
-    }
-    return pbc_read_run(start, blk, cnt, buf);
+    return ext_read_blocks_with("ext2", disk != NULL, total_blocks, start, blk, cnt, buf);
 }
 struct DISK_PARTITION *ext2_partition(void) {
     return part;
@@ -802,33 +791,6 @@ static int ext2_dir_next_impl(const struct FS_INODE *dino, uint32_t *pos, struct
     }
     return -1;
 }
-static int ext2_find_in_dir(const struct FS_INODE *dino, const char *name, uint32_t *child,
-                            int *ftype) {
-    uint32_t pos = 0;
-    struct FS_DIRENT de;
-    while (ext2_dir_next_impl(dino, &pos, &de) == 0) {
-        if (strcmp(de.filename, name) == 0) {
-            *child = de.i_no;
-            *ftype = (int)de.f_type;
-            return 0;
-        }
-    }
-    return -1;
-}
-static int ext2_read_target(uint32_t ino, char *buf, uint32_t cap) {
-    struct FS_INODE node;
-    if (ext2_read_inode_impl(ino, &node) || (node.i_mode & 0xF000u) != 0xA000u) {
-        return -1;
-    }
-    uint32_t len = node.i_size < cap - 1 ? node.i_size : cap - 1;
-    if (node.i_size < 60u) {
-        memcpy(buf, &node.i_block[0], len);
-    } else if (ext2_read_from_inode_impl(&node, 0, buf, len) != (int)len) {
-        return -1;
-    }
-    buf[len] = 0;
-    return (int)len;
-}
 int ext2_abs_path(const char *path, char *out, uint32_t cap) {
     if (path == NULL || path[0] == 0) {
         return -1;
@@ -884,105 +846,31 @@ int ext2_lookup_ftype(const char *path, uint32_t *ino, int *ftype, int follow) {
     rwlock_read_release(&ext2_lock);
     return rc;
 }
+static int ext2_read_target(uint32_t ino, char *buf, uint32_t cap) {
+    return ext_read_link_target_with(ext2_read_inode_impl,
+                                    ext2_read_from_inode_impl, ino, buf, cap);
+}
+
 int ext2_read_link_target(uint32_t ino, char *buf, uint32_t cap) {
     rwlock_read_acquire(&ext2_lock);
     int rc = ext2_read_target(ino, buf, cap);
     rwlock_read_release(&ext2_lock);
     return rc;
 }
-static int ext2_lookup_depth(const char *path, uint32_t *ino, int *ftype, int follow, int depth) {
-    if (disk == NULL || path == NULL || path[0] != '/') {
-        return -1;
-    }
-    char cur[MAX_PATH_LEN];
-    uint32_t clen = (uint32_t)strlen(path);
-    if (clen >= MAX_PATH_LEN) {
-        return -1;
-    }
-    memcpy(cur, path, clen + 1);
-    for (;;) {
-        if (--depth < 0) {
-            return -1;
-        }
-        uint32_t cino = 2;
-        int cdir = 1;
-        *ino = 2;
-        *ftype = FT_DIRECTORY;
-        const char *p = cur;
-        while (*p == '/') {
-            p++;
-        }
-        if (*p == 0) {
-            return 0;
-        }
-        struct FS_INODE node;
-        if (ext2_read_inode_impl(2, &node)) {
-            return -1;
-        }
-        for (;;) {
-            const char *cstart = p;
-            char comp[MAX_FILE_NAME_LEN];
-            uint32_t ci = 0;
-            while (*p && *p != '/' && ci < MAX_FILE_NAME_LEN - 1) {
-                comp[ci++] = *p++;
-            }
-            comp[ci] = 0;
-            if (ci == 0) {
-                break;
-            }
-            uint32_t child = 0;
-            int ft = 0;
-            if (ext2_find_in_dir(&node, comp, &child, &ft)) {
-                return -1;
-            }
-            if (ft == FT_SYMLINK) {
-                char tgt[MAX_PATH_LEN];
-                if (!follow || ext2_read_target(child, tgt, MAX_PATH_LEN) < 0) {
-                    *ino = child;
-                    *ftype = ft;
-                    cdir = 0;
-                    return 0;
-                }
-                char np[MAX_PATH_LEN];
-                uint32_t plen = (uint32_t)(cstart - cur);
-                uint32_t tlen = (uint32_t)strlen(tgt);
-                if (tgt[0] == '/') {
-                    plen = 0;
-                } else {
-                    while (plen > 1 && cur[plen - 1] == '/') {
-                        plen--;
-                    }
-                }
-                if (plen + tlen + 2 > MAX_PATH_LEN) {
-                    return -1;
-                }
-                memcpy(np, cur, plen);
-                if (plen > 1 || (plen == 1 && cur[0] != '/')) {
-                    np[plen++] = '/';
-                } else if (plen == 0) {
-                    np[plen++] = '/';
-                }
-                memcpy(np + plen, tgt, tlen + 1);
-                memcpy(cur, np, plen + tlen + 1);
-                break;
-            }
-            cino = child;
-            cdir = (ft == FT_DIRECTORY);
-            while (*p == '/') {
-                p++;
-            }
-            if (*p == 0) {
-                *ino = cino;
-                *ftype = ft;
-                return 0;
-            }
-            if (!cdir || ext2_read_inode_impl(child, &node)) {
-                return -1;
-            }
-        }
-        *ino = cino;
-        *ftype = cdir ? FT_DIRECTORY : FT_REGULAR;
-    }
+
+static const struct EXT_PATH_OPS ext2_path_ops = {
+    .read_inode = ext2_read_inode_impl,
+    .dir_next = ext2_dir_next_impl,
+    .read_link_target = ext2_read_target,
+    .mounted = 0,
+};
+
+static int ext2_lookup_depth(const char *path, uint32_t *ino, int *ftype, int follow,
+                              int depth) {
+
+    struct EXT_PATH_OPS ops = ext2_path_ops;
+    ops.mounted = disk != NULL;
+    return ext_lookup_depth_with(&ops, path, ino, ftype, follow, depth);
 }
 void ext2_statfs_info(uint32_t *bsize, uint32_t *blocks, uint32_t *bfree, uint32_t *files,
                       uint32_t *ffree) {
@@ -999,3 +887,24 @@ void ext2_statfs_info(uint32_t *bsize, uint32_t *blocks, uint32_t *bfree, uint32
         *ffree = free_inodes;
     rwlock_read_release(&ext2_lock);
 }
+
+static const struct VFS_OPS ext2_vfs_ops = {
+    ext2_init,           ext2_partition,        ext2_lookup,     ext2_lookup_ftype,
+    ext2_abs_path,       ext2_read_link_target, ext2_read_inode, ext2_read_from_inode,
+    ext2_dir_next,       ext2_new_inode,        ext2_free_inode, ext2_write_inode,
+    ext2_write_to_inode, ext2_truncate_inode,   ext2_add_entry,  ext2_add_entry_dt,
+    ext2_remove_entry,   ext2_statfs_info,
+};
+
+static int ext2_probe_sb(const uint8_t *sb) {
+    if (*(const uint16_t *)(sb + EXT4_SB_MAGIC_OFF) != EXT4_SUPER_MAGIC) {
+        return 0;
+    }
+    uint32_t incompat = *(const uint32_t *)(sb + EXT4_SB_INCOMPAT_OFF);
+    uint32_t ro_compat = *(const uint32_t *)(sb + EXT4_SB_RO_COMPAT_OFF);
+
+    return (incompat & (EXT4_FEATURE_INCOMPAT_EXTENTS | EXT4_FEATURE_INCOMPAT_64BIT)) == 0 &&
+           (ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) == 0;
+}
+
+VFS_REGISTER("ext2", &ext2_vfs_ops, ext2_probe_sb);

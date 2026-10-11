@@ -1,7 +1,7 @@
 #ifndef COREZ_LINUX_COMPAT_H
 #define COREZ_LINUX_COMPAT_H
 
-#include "kernel/asm/stub.h"
+#include "arch/asm/stub.h"
 #include <stdint.h>
 
 #define COMPAT_SYSCALL_BASE 0x50000

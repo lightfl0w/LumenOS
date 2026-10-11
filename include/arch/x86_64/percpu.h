@@ -1,5 +1,5 @@
-#ifndef PERCPU_H
-#define PERCPU_H
+#ifndef ARCH_X86_64_PERCPU_H
+#define ARCH_X86_64_PERCPU_H
 #include <stdint.h>
 #define PER_CPU_BASE 0x00100000u
 #define NR_CPU 4

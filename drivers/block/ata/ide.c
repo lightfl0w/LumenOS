@@ -4,8 +4,9 @@
 #include "drivers/bus/pci/pci.h"
 #include "drivers/char/serial/console/io.h"
 #include "drivers/driver_ops.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/x86_64/irq.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 #include "user/libc/stdio.h"
@@ -355,3 +356,5 @@ void ide_init(void) {
     block_print_partitions();
     kprintf_v("ide_init done\n");
 }
+
+IRQ_REGISTER(IRQ_IDE, intr_hd_handler, "ide");

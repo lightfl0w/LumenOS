@@ -175,5 +175,4 @@ void wm_draw_bar(struct GFX_CANVAS *c, struct GFX_RECT *clip) {
     up[5] = 0;
     int rw = font_text_width(up, BAR_FONT_PX);
     font_draw_clip(c, px - 12 - rw, ty, up, BAR_FONT_PX, t->muted, &v);
-    (void)ss;
 }

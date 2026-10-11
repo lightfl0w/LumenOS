@@ -57,14 +57,12 @@ static volatile long woke_ret;
 static unsigned waiter_bits;
 
 static void *bitset_waiter(void *arg) {
-    (void)arg;
     woke_ret = futex6(&shared_word, FUTEX_WAIT_BITSET, 0, 0, waiter_bits);
     woke_flag = 1;
     return 0;
 }
 
 static void *timed_waiter(void *arg) {
-    (void)arg;
     struct timespec ts;
     set_abs(&ts, now_ms(CLOCK_MONOTONIC) + 4000);
     woke_ret = futex6(&shared_word, FUTEX_WAIT_BITSET, 0, &ts, FUTEX_MATCH_ANY);
@@ -73,7 +71,6 @@ static void *timed_waiter(void *arg) {
 }
 
 static void *trivial_thread(void *arg) {
-    (void)arg;
     write(1, "fbs t0: child ran\n", 18);
     return (void *)7;
 }

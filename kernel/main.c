@@ -14,15 +14,15 @@
 #include "lib/malloc/kmalloc.h"
 #include "drivers/input/keyboard/keyboard.h"
 #include "fs/fs.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
-#include "kernel/boot_info.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
+#include "arch/boot_info.h"
 #include "kernel/gui/gfx.h"
 #include "kernel/sched/thread.h"
 #include "kernel/ssp.h"
 #include "kernel/syscall/futex.h"
 #include "kernel/syscall/syscall.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/process.h"
 #include "lib/malloc/kmalloc.h"
@@ -36,8 +36,6 @@
 
 extern const uint8_t _binary__root_LumenOS_logo_png_start[];
 extern const uint8_t _binary__root_LumenOS_logo_png_end[];
-
-#define VRAM_VIRT 0x80000000UL
 
 static void show_boot_logo(void) {
     const struct BOOT_INFO *bi = boot_info();
@@ -79,8 +77,7 @@ static void show_boot_logo(void) {
     };
 
     uint32_t fb_bytes = (uint32_t)fb->pitch * (uint32_t)fh;
-    uintptr_t vram_virt =
-        (uintptr_t)VRAM_VIRT + ((uintptr_t)fb->addr & 0x1FFFFFUL);
+    uintptr_t vram_virt = fb_window_virt(fb->addr);
     struct GFX_CANVAS fb_canvas = {
         .pixels = (uint32_t *)(void *)vram_virt,
         .pitch  = fb->pitch,
@@ -156,7 +153,22 @@ void kmain(uint32_t magic, void *mbi_ptr, uint32_t kphys) {
     if (fpitch <= 0)
         fpitch = fw * (fbpp / 8);
     uint32_t bytes = (uint32_t)fpitch * (uint32_t)fh;
-    uintptr_t vram_virt = (uintptr_t)VRAM_VIRT + ((uintptr_t)fb->addr & 0x1FFFFFUL);
+    uintptr_t vram_virt = fb_window_virt(fb->addr);
+
+    uint64_t fb_span = (uint64_t)fb->addr & FB_WINDOW_2M_MASK;
+    uint64_t fb_limit = fb_span + (uint64_t)FB_WINDOW_FB_PAGES * 0x200000UL;
+    uint64_t fb_need = fb->addr + (uint64_t)bytes;
+    if (fb_need > fb_limit) {
+        kprintf("[warn] framebuffer needs %#llx..%#llx but boot mapped only "
+                "%#llx..%#llx; console is clamped\n",
+                (unsigned long long)fb->addr, (unsigned long long)fb_need,
+                (unsigned long long)fb_span, (unsigned long long)fb_limit);
+        fh = (int)((fb_limit - fb->addr) / (uint64_t)fpitch);
+        if (fh < 1) {
+            fh = 1;
+        }
+        bytes = (uint32_t)fpitch * (uint32_t)fh;
+    }
     io_init((uint8_t *)vram_virt, fw, fh, bytes, fpitch, fbpp);
     struct GFX_FB_FORMAT fmt = {
         fbpp,

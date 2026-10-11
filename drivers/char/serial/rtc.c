@@ -1,8 +1,8 @@
 #include "drivers/char/serial/rtc.h"
 
 #include "arch/interrupt/interrupt.h"
-#include "kernel/asm_func.h"
-#include "kernel/time/pit.h"
+#include "arch/asm_func.h"
+#include "arch/time/pit.h"
 
 #define RTC_REG_INDEX 0x70
 #define RTC_REG_DATA 0x71

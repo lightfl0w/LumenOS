@@ -13,14 +13,14 @@
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
 #include "kernel/abi/linux/linux_compat.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "kernel/syscall/file_syscall.h"
 #include "kernel/syscall/futex.h"
 #include "kernel/syscall/mmap.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/clone.h"
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/fork.h"
@@ -106,7 +106,6 @@ int32_t compat_getitimer(uint32_t which, uint64_t cur_val) {
     return 0;
 }
 int64_t lc_setitimer(LC_ARGS) {
-    (void)r;
     if (b && !user_ptr_ok(r, b, sizeof(struct LINUX_ITIMERVAL), 0))
         return -LINUX_EFAULT;
     if (c && !user_ptr_ok(r, c, sizeof(struct LINUX_ITIMERVAL), 1))
@@ -114,13 +113,11 @@ int64_t lc_setitimer(LC_ARGS) {
     return compat_setitimer((uint32_t)a, b, c);
 }
 int64_t lc_getitimer(LC_ARGS) {
-    (void)r;
     if (b && !user_ptr_ok(r, b, sizeof(struct LINUX_ITIMERVAL), 1))
         return -LINUX_EFAULT;
     return compat_getitimer((uint32_t)a, b);
 }
 int64_t lc_getrusage(LC_ARGS) {
-    (void)a;
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_RUSAGE), 1))
         return -LINUX_EFAULT;
     struct LINUX_RUSAGE ru;
@@ -131,14 +128,12 @@ int64_t lc_getrusage(LC_ARGS) {
     return 0;
 }
 int64_t lc_getsid(LC_ARGS) {
-    (void)r;
     struct TASK *t = a ? pid2thread((int32_t)a) : current;
     if (t == NULL)
         return -LINUX_ESRCH;
     return (int64_t)(t->sid ? t->sid : t->pid);
 }
 int64_t lc_umask(LC_ARGS) {
-    (void)r;
     struct TASK *cur = current;
     uint32_t old = cur->umask;
     cur->umask = (uint32_t)a & 0o7777u;
@@ -161,12 +156,6 @@ LC_GETID(lc_getgid, gid)
 LC_GETID(lc_geteuid, euid)
 LC_GETID(lc_getegid, egid)
 int64_t lc_setuid(LC_ARGS) {
-    (void)r;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     struct TASK *cur = current;
     uint32_t v = (uint32_t)a;
     if (cur->euid == 0) {
@@ -180,12 +169,6 @@ int64_t lc_setuid(LC_ARGS) {
     return -LINUX_EPERM;
 }
 int64_t lc_setgid(LC_ARGS) {
-    (void)r;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     struct TASK *cur = current;
     uint32_t v = (uint32_t)a;
     if (cur->egid == 0) {
@@ -199,11 +182,6 @@ int64_t lc_setgid(LC_ARGS) {
     return -LINUX_EPERM;
 }
 int64_t lc_setreuid(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     struct TASK *cur = current;
     uint32_t ru = (a == (uint64_t)-1) ? cur->uid : (uint32_t)a;
     uint32_t eu = (b == (uint64_t)-1) ? cur->euid : (uint32_t)b;
@@ -217,11 +195,6 @@ int64_t lc_setreuid(LC_ARGS) {
     return 0;
 }
 int64_t lc_setregid(LC_ARGS) {
-    (void)r;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     struct TASK *cur = current;
     uint32_t rg = (a == (uint64_t)-1) ? cur->gid : (uint32_t)a;
     uint32_t eg = (b == (uint64_t)-1) ? cur->egid : (uint32_t)b;
@@ -235,10 +208,6 @@ int64_t lc_setregid(LC_ARGS) {
     return 0;
 }
 int64_t lc_setresuid(LC_ARGS) {
-    (void)r;
-    (void)d;
-    (void)e;
-    (void)f;
     struct TASK *cur = current;
     uint32_t ru = (a == (uint64_t)-1) ? cur->uid : (uint32_t)a;
     uint32_t eu = (b == (uint64_t)-1) ? cur->euid : (uint32_t)b;
@@ -253,10 +222,6 @@ int64_t lc_setresuid(LC_ARGS) {
     return 0;
 }
 int64_t lc_setresgid(LC_ARGS) {
-    (void)r;
-    (void)d;
-    (void)e;
-    (void)f;
     struct TASK *cur = current;
     uint32_t rg = (a == (uint64_t)-1) ? cur->gid : (uint32_t)a;
     uint32_t eg = (b == (uint64_t)-1) ? cur->egid : (uint32_t)b;
@@ -271,10 +236,6 @@ int64_t lc_setresgid(LC_ARGS) {
     return 0;
 }
 int64_t lc_getresuid(LC_ARGS) {
-    (void)r;
-    (void)d;
-    (void)e;
-    (void)f;
     if (!user_ptr_ok(r, a, 4, 1) || !user_ptr_ok(r, b, 4, 1) || !user_ptr_ok(r, c, 4, 1))
         return -LINUX_EFAULT;
     *(uint32_t *)(uintptr_t)a = current->uid;
@@ -283,10 +244,6 @@ int64_t lc_getresuid(LC_ARGS) {
     return 0;
 }
 int64_t lc_getresgid(LC_ARGS) {
-    (void)r;
-    (void)d;
-    (void)e;
-    (void)f;
     if (!user_ptr_ok(r, a, 4, 1) || !user_ptr_ok(r, b, 4, 1) || !user_ptr_ok(r, c, 4, 1))
         return -LINUX_EFAULT;
     *(uint32_t *)(uintptr_t)a = current->gid;
@@ -295,37 +252,20 @@ int64_t lc_getresgid(LC_ARGS) {
     return 0;
 }
 int64_t lc_getgroups(LC_ARGS) {
-    (void)r;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     return 0;
 }
 int64_t lc_setgroups(LC_ARGS) {
-    (void)r;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (current->egid != 0 && current->euid != 0)
         return -LINUX_EPERM;
     return 0;
 }
 int64_t lc_tkill(LC_ARGS) {
-    (void)r;
     return sys_kill((int)a, (int)b) < 0 ? -LINUX_EINVAL : 0;
 }
 int64_t lc_tgkill(LC_ARGS) {
-    (void)r;
-    (void)a;
     return sys_kill((int)b, (int)c) < 0 ? -LINUX_EINVAL : 0;
 }
 int64_t lc_setsid(LC_ARGS) {
-    (void)r;
-    (void)a;
     struct TASK *cur = current;
     for (uint32_t i = 0; i < MAX_TASKS; i++) {
         struct TASK *t = &task_table[i];
@@ -458,26 +398,21 @@ int32_t compat_set_thread_area(uint32_t base) {
     return 0;
 }
 int64_t lc_getpid(LC_ARGS) {
-    (void)r;
     return (int64_t)current->pid;
 }
 int64_t lc_getppid(LC_ARGS) {
-    (void)r;
     struct TASK *cur = current;
     return cur->parent_pid >= 0 ? (int64_t)cur->parent_pid : 0;
 }
 int64_t lc_exit(LC_ARGS) {
-    (void)r;
     sys_exit((int32_t)a);
     return 0;
 }
 
 int64_t lc_brk(LC_ARGS) {
-    (void)r;
     return (int64_t)sys_brk((uint32_t)a);
 }
 int64_t lc_mmap(LC_ARGS) {
-    (void)r;
     struct SYS_MMAP_ARGS m = {(uint32_t)a, (uint32_t)b,
                               (uint32_t)c, (uint32_t)d,
                               (uint32_t)e, (uint32_t)(f & ~(uint32_t)(PAGE_SIZE - 1u))};
@@ -485,32 +420,21 @@ int64_t lc_mmap(LC_ARGS) {
     return ret;
 }
 int64_t lc_munmap(LC_ARGS) {
-    (void)r;
     return sys_munmap((uint32_t)a, (uint32_t)b);
 }
 int64_t lc_set_thread_area(LC_ARGS) {
-    (void)r;
     return compat_set_thread_area((uint32_t)a);
 }
 int64_t lc_gettid(LC_ARGS) {
-    (void)r;
-    (void)a;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     return (int64_t)current->pid;
 }
 int64_t lc_set_tid_address(LC_ARGS) {
-    (void)r;
     struct TASK *cur = current;
     if (user_ptr_ok(r, a, 4, 1))
         cur->clear_child_tid = a;
     return (int64_t)cur->pid;
 }
 int64_t lc_kill(LC_ARGS) {
-    (void)r;
     return sys_kill((int)a, (int)b);
 }
 int64_t lc_futex(LC_ARGS) {
@@ -636,7 +560,6 @@ int64_t lc_clock_getres(LC_ARGS) {
     return 0;
 }
 int64_t lc_mprotect(LC_ARGS) {
-    (void)r;
     return sys_mprotect(a, b, c);
 }
 int64_t lc_rt_sigaction(LC_ARGS) {
@@ -726,15 +649,12 @@ int64_t lc_rt_sigreturn(LC_ARGS) {
     return (int64_t)sys_sigreturn(r);
 }
 int64_t lc_setpgid(LC_ARGS) {
-    (void)r;
     return compat_setpgid(a, b);
 }
 int64_t lc_getpgid(LC_ARGS) {
-    (void)r;
     return compat_getpgid(a);
 }
 int64_t lc_arch_prctl(LC_ARGS) {
-    (void)r;
     struct TASK *cur = current;
     switch (a) {
     case 0x1002u:
@@ -755,7 +675,6 @@ int64_t lc_arch_prctl(LC_ARGS) {
     }
 }
 int64_t lc_sched_yield(LC_ARGS) {
-    (void)r;
     return 0;
 }
 int64_t lc_execve(LC_ARGS) {
@@ -768,8 +687,6 @@ int64_t lc_fork(LC_ARGS) {
     return sys_fork(r);
 }
 int64_t lc_clone(LC_ARGS) {
-    (void)d;
-    (void)f;
     uint32_t flags = (uint32_t)a;
     if ((flags & CLONE_VM) == 0)
         return sys_clone_ex(flags, (uint32_t)b, (uint32_t)e, r);
@@ -833,10 +750,6 @@ void lc_fill_rlimit(uint64_t res, struct LINUX_RLIMIT *rl) {
     }
 }
 int64_t lc_getrlimit(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (b == 0 || !user_ptr_ok(r, b, sizeof(struct LINUX_RLIMIT), 1))
         return -LINUX_EFAULT;
     struct LINUX_RLIMIT rl;
@@ -845,18 +758,11 @@ int64_t lc_getrlimit(LC_ARGS) {
     return 0;
 }
 int64_t lc_setrlimit(LC_ARGS) {
-    (void)a;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (b == 0 || !user_ptr_ok(r, b, sizeof(struct LINUX_RLIMIT), 0))
         return -LINUX_EFAULT;
     return 0;
 }
 int64_t lc_prlimit64(LC_ARGS) {
-    (void)e;
-    (void)f;
     if (a != 0 && (int32_t)a != (int32_t)current->pid && (int32_t)a != -1)
         return -LINUX_EPERM;
     if (d != 0) {
@@ -869,10 +775,6 @@ int64_t lc_prlimit64(LC_ARGS) {
     return 0;
 }
 int64_t lc_madvise(LC_ARGS) {
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     if (a == 0)
         return -LINUX_EINVAL;
     if (!user_ptr_ok(r, a, (uint32_t)b, 1))

@@ -7,11 +7,11 @@
 #include "arch/x86_64/cpu/tss.h"
 #include "arch/x86_64/irq/acpi.h"
 #include "arch/x86_64/irq/apic.h"
-#include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
-#include "kernel/sched/percpu.h"
+#include "lib/printf/printf.h"
+#include "arch/asm_func.h"
+#include "arch/percpu.h"
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 
@@ -65,23 +65,13 @@ static void cpu_table_init(void) {
     }
 }
 
-static void ap_desc_init(struct GDT_DESC *d, uint32_t base, uint32_t limit, uint8_t attr_low,
-                         uint8_t attr_high) {
-    d->limit_low = limit & 0xFFFF;
-    d->base_low = base & 0xFFFF;
-    d->base_mid = (base >> 16) & 0xFF;
-    d->attr_low = attr_low;
-    d->limit_high_attr_high = ((limit >> 16) & 0x0F) | attr_high;
-    d->base_high = (base >> 24) & 0xFF;
-}
-
 static void ap_build_gdt(uint32_t idx, uint32_t percpu_base) {
     struct GDT_DESC *g = ap_gdt[idx];
     memset(g, 0, sizeof(ap_gdt[idx]));
 
-    ap_desc_init(&g[1], 0, 0, 0x9A, 0x20);
-    ap_desc_init(&g[2], 0, 0xFFFFF, 0x92, 0xCF);
-    ap_desc_init(&g[GDT_PER_CPU_INDEX], percpu_base, 0xFFF, 0x92, 0x40);
+    desc_init(&g[1], 0, 0, 0x9A, 0x20);
+    desc_init(&g[2], 0, 0xFFFFF, 0x92, 0xCF);
+    desc_init(&g[GDT_PER_CPU_INDEX], percpu_base, 0xFFF, 0x92, 0x40);
     tss_desc_init(&g[GDT_TSS_INDEX], (uint64_t)tss_cpu(idx), sizeof(struct X86_TSS) - 1);
 
     ap_gdtr[idx].limit = (uint16_t)(sizeof(ap_gdt[idx]) - 1);

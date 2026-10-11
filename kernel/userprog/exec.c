@@ -9,9 +9,9 @@
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/win32/pe.h"
 #include "kernel/abi/win32/win32.h"
-#include "kernel/asm/stub.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm/stub.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/auxv.h"
 #include "kernel/sched/thread.h"
 #include "kernel/userprog/elf.h"
@@ -37,16 +37,6 @@ static const char **exec_env_defaults(void) {
 #define EXEC_STRBUF_PAGES 32
 #define HEAP_ASLR_PAGES 2048
 #define MAX_INTERP_PATH 128
-static void apply_rx(uint32_t base, uint32_t pages) {
-    for (uint32_t i = 0; i < pages; i++) {
-        uint32_t pg = base + i * PAGE_SIZE;
-        uint64_t *pte = pte_ptr(pg);
-        if (pte != NULL && (*pte & PTE_P)) {
-            *pte = (*pte & 0x000ffffffffff000ull) | pte_wx(PTE_P | PTE_U, 0, 1);
-            arch_tlb_flush(pg);
-        }
-    }
-}
 static void apply_relocs(uint32_t bias, uint32_t dyn_vaddr) {
     if (bias == 0 || dyn_vaddr == 0)
         return;
@@ -139,9 +129,7 @@ static void scan_note_abi(int32_t fd, uint32_t base_off, uint32_t filesz, int *i
             if (memcmp(name, "GNU", 4) == 0 && nh.descsz >= 8) {
                 uint8_t desc[8];
                 read_file(fd, desc, 8);
-                if (desc[0] == 0) {
-                    *is_linux = 1;
-                }
+                *is_linux = desc[0] == 0;
             }
         }
         remaining -= sz;
@@ -171,27 +159,30 @@ static void fill_entry_regs(struct ARCH_REGS *r, uint32_t entry, int is64, uint3
         r->rcx = argc;
     }
 }
+
+static int make_user_page_writable(uint32_t page) {
+    uint64_t *pde = pde_ptr(page);
+    uint64_t *pte = pte_ptr(page);
+    if (pde == NULL || (*pde & 0x80) || pte == NULL || !(*pte & 1)) {
+        return get_a_page(page) == 0 ? -1 : 0;
+    }
+    if (*pte & 2) {
+        return 0;
+    }
+    free_user_page(page);
+    return get_a_page(page) == 0 ? -1 : 0;
+}
+
 static int32_t segment_load(int32_t fd, uint32_t offset, uint32_t filesz, uint32_t memsz,
                             uint32_t vaddr) {
     uint32_t vaddr_first_page = vaddr & 0xfffff000;
     uint32_t size_in_first_page = PAGE_SIZE - (vaddr & 0x00000fff);
     uint32_t occupy_pages =
         (memsz > size_in_first_page) ? DIV_ROUND_UP(memsz - size_in_first_page, PAGE_SIZE) + 1 : 1;
-    uint32_t vaddr_page = vaddr_first_page;
     for (uint32_t i = 0; i < occupy_pages; i++) {
-        uint64_t *pde = pde_ptr(vaddr_page);
-        uint64_t *pte = pte_ptr(vaddr_page);
-        if (pde == NULL || (*pde & 0x80) || pte == NULL || !(*pte & 1)) {
-            if (get_a_page(vaddr_page) == 0) {
-                return -1;
-            }
-        } else if (!(*pte & 2)) {
-            free_user_page(vaddr_page);
-            if (get_a_page(vaddr_page) == 0) {
-                return -1;
-            }
+        if (make_user_page_writable(vaddr_first_page + i * PAGE_SIZE) != 0) {
+            return -1;
         }
-        vaddr_page += PAGE_SIZE;
     }
     sys_lseek(fd, offset, SEEK_SET);
     if (read_file(fd, (void *)vaddr, filesz) != filesz) {
@@ -254,14 +245,15 @@ static int32_t probe_image64(int32_t fd, struct LINUX_ELF64_EHDR *ehdr, uint32_t
         if (read_file(fd, &ph, sizeof(ph)) != sizeof(ph)) {
             return -1;
         }
-        if (ph.p_type == PT_LOAD) {
-            if ((uint32_t)ph.p_vaddr < lo) {
-                lo = (uint32_t)ph.p_vaddr;
-            }
-            e = (uint32_t)(ph.p_vaddr + ph.p_memsz);
-            if (e > hi) {
-                hi = e;
-            }
+        if (ph.p_type != PT_LOAD) {
+            continue;
+        }
+        if ((uint32_t)ph.p_vaddr < lo) {
+            lo = (uint32_t)ph.p_vaddr;
+        }
+        e = (uint32_t)(ph.p_vaddr + ph.p_memsz);
+        if (e > hi) {
+            hi = e;
         }
     }
     if (hi <= lo) {
@@ -313,7 +305,7 @@ static int32_t map_image64(int32_t fd, const struct LINUX_ELF64_EHDR *ehdr, uint
         }
     }
     for (int i = 0; i < wxn; i++) {
-        apply_rx(wx[i].base, wx[i].pages);
+        mm_make_user_rx(wx[i].base, wx[i].pages);
     }
     *end = image_end;
     return 0;
@@ -527,7 +519,7 @@ static int32_t load32(int32_t fd, struct EXEC_IMAGE *img) {
                 uint32_t pages = (prog_header.p_memsz > sz_first)
                                      ? DIV_ROUND_UP(prog_header.p_memsz - sz_first, PAGE_SIZE) + 1
                                      : 1;
-                apply_rx(first, pages);
+                mm_make_user_rx(first, pages);
             }
         }
         prog_header_offset += elf_header.e_phentsize;

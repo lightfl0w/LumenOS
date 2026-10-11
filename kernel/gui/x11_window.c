@@ -243,7 +243,6 @@ void h_change_attrs(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     }
 }
 void h_get_window_attrs(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int i = win_idx(c, wid);
     if (i < 0)
@@ -272,7 +271,6 @@ void h_get_window_attrs(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, extra, sizeof(extra));
 }
 void h_destroy_window(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int i = win_idx(c, wid);
     if (i < 0)
@@ -280,7 +278,6 @@ void h_destroy_window(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     win_teardown(c, i);
 }
 void h_map_window(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int i = win_idx(c, wid);
     if (i < 0)
@@ -307,7 +304,6 @@ void h_map_window(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     post_event_to(c, w, ev, 0x00008000u);
 }
 void h_unmap_window(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int i = win_idx(c, wid);
     if (i < 0)
@@ -400,7 +396,6 @@ void h_configure_window(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     }
 }
 void h_get_geometry(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t did = rd32(p + 4);
     uint8_t head[32];
     reply_init(c, X11_REQ_GetGeometry, 0, head);
@@ -423,7 +418,6 @@ void h_get_geometry(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_query_tree(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     if (wid != X11_ROOT_WINDOW && win_idx(c, wid) < 0)
         return post_error(c, X11_ERR_Window, X11_REQ_QueryTree, 0, wid);
@@ -491,7 +485,6 @@ void h_change_property(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
         memcpy(w->props[slot].data, p + 24, nbytes);
 }
 void h_get_property(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int i = win_idx(c, wid);
     if (i < 0)
@@ -519,7 +512,6 @@ void h_get_property(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, extra, nbytes);
 }
 void h_delete_property(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     int i = win_idx(c, wid);
     if (i < 0)
@@ -530,8 +522,6 @@ void h_delete_property(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
             c->win[i].props[k].used = 0;
 }
 void h_query_pointer(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)p;
-    (void)len;
     int px = comp_pointer_x(), py = comp_pointer_y();
     uint8_t head[32];
     reply_init(c, X11_REQ_QueryPointer, 0, head);
@@ -547,7 +537,6 @@ void h_query_pointer(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_translate_coords(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     int wi = win_idx(c, rd32(p + 4));
     if (wi < 0)
         return post_error(c, X11_ERR_Window, X11_REQ_TranslateCoordinates, 0, rd32(p + 4));
@@ -563,8 +552,6 @@ void h_translate_coords(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_get_input_focus(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)p;
-    (void)len;
     uint8_t head[32];
     reply_init(c, X11_REQ_GetInputFocus, 0, head);
     head[1] = 0;
@@ -572,7 +559,6 @@ void h_get_input_focus(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_set_input_focus(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)len;
     uint32_t wid = rd32(p + 4);
     if (wid != 0 && wid != 1 && win_idx(c, wid) < 0)
         return post_error(c, X11_ERR_Window, X11_REQ_SetInputFocus, 0, wid);
@@ -580,8 +566,6 @@ void h_set_input_focus(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
 }
 
 void h_query_extension(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)p;
-    (void)len;
     uint8_t head[32];
     reply_init(c, X11_REQ_QueryExtension, 0, head);
     head[1] = 0;
@@ -589,8 +573,6 @@ void h_query_extension(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
     reply_finish(c, head, 0, 0);
 }
 void h_list_extensions(struct X11_CONN *c, const uint8_t *p, uint32_t len) {
-    (void)p;
-    (void)len;
     uint8_t head[32];
     reply_init(c, X11_REQ_ListExtensions, 0, head);
     head[1] = 0;

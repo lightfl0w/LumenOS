@@ -6,7 +6,7 @@
 #include "arch/interrupt/interrupt.h"
 #include "drivers/char/serial/console/io.h"
 #include "kernel/gui/font.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 
 #define TASKBAR_TOP (comp_screen_h() - COMP_BAR_H)

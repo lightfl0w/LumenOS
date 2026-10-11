@@ -1,6 +1,7 @@
 #include "kernel/gui/wm.h"
 
 #include "kernel/gui/wm_internal.h"
+#include "mm/pool.h"
 
 extern void clients_spawn_next(void);
 extern void clients_broadcast_close(void);
@@ -45,11 +46,14 @@ static int last_click_x, last_click_y;
 #define DBL_CLICK_TICKS (PIT_HZ * 4 / 10)
 #define SNAP_MARGIN 14
 
+#define WM_MIN_KERNEL_PTR ((unsigned long)KERNEL_VIRT_BASE)
+#define WM_MAX_KERNEL_PTR (((unsigned long)KERNEL_VIRT_BASE) + 0x2000000ul)
+
 static const int alpha_levels[] = {255, 216, 176, 136};
 static int alpha_idx = 0;
 
 static int ws_index_of(struct GUI_WORKSPACE *ws, struct WL_SURFACE *s) {
-    if ((unsigned long)ws < 0xC0000000ul || (unsigned long)ws >= 0xC2000000ul || ws->n < 0 ||
+    if ((unsigned long)ws < WM_MIN_KERNEL_PTR || (unsigned long)ws >= WM_MAX_KERNEL_PTR || ws->n < 0 ||
         ws->n > WL_MAX_SURFACES)
         return -1;
     for (int i = 0; i < ws->n; i++)
@@ -235,7 +239,7 @@ static void wm_manage_locked(struct WL_SURFACE *s) {
 }
 
 static void wm_unmanage_locked(struct WL_SURFACE *s) {
-    if (!s || (unsigned long)s < 0xC0000000ul || (unsigned long)s >= 0xC2000000ul || !s->used ||
+    if (!s || (unsigned long)s < WM_MIN_KERNEL_PTR || (unsigned long)s >= WM_MAX_KERNEL_PTR || !s->used ||
         s->ws < 0 || s->ws >= WL_MAX_WS)
         return;
     struct GUI_WORKSPACE *ws = &workspaces[s->ws];

@@ -1,7 +1,7 @@
 #ifndef ABI_WIN32_WIN32_H
 #define ABI_WIN32_WIN32_H
 
-#include "kernel/asm/stub.h"
+#include "arch/asm/stub.h"
 #include <stdint.h>
 
 struct TASK;

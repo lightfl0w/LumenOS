@@ -1,10 +1,10 @@
 #include "kernel/ipc/pipe.h"
 #include "drivers/char/serial/ioqueue.h"
 #include "fs/file.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "mm/pool.h"
 static struct FILE *pipe_file(uint32_t local_fd) {
     struct FILE *file = file_get(fd_local2global(local_fd));
@@ -93,16 +93,20 @@ static int pipe_task_live(struct TASK *task) {
     return 1;
 }
 
+static int pipe_task_holds_fd(const struct TASK *task, uint32_t global_fd) {
+    for (uint32_t fd = 0; fd < MAX_FILES_OPEN_PER_PROC; fd++) {
+        if (task->fd_table[fd] == global_fd) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int32_t pipe_end_alive(uint32_t global_fd) {
     for (uint32_t t = 0; t < MAX_TASKS; t++) {
         struct TASK *task = &task_table[t];
-        if (!pipe_task_live(task)) {
-            continue;
-        }
-        for (uint32_t fd = 0; fd < MAX_FILES_OPEN_PER_PROC; fd++) {
-            if (task->fd_table[fd] == global_fd) {
-                return 1;
-            }
+        if (pipe_task_live(task) && pipe_task_holds_fd(task, global_fd)) {
+            return 1;
         }
     }
     return 0;
@@ -130,6 +134,17 @@ uint32_t pipe_read(int32_t fd, void *buf, uint32_t count) {
     return bytes_read;
 }
 
+static int pipe_wait_for_room(struct TTY_IOQUEUE *ioq, uint32_t peer) {
+    if (ioq_length(ioq) < BUFSIZE - 1) {
+        return 1;
+    }
+    if (!pipe_end_alive(peer)) {
+        return 0;
+    }
+    mtime_sleep(1);
+    return 1;
+}
+
 uint32_t pipe_write(int32_t fd, const void *buf, uint32_t count) {
     struct FILE *file = pipe_file((uint32_t)fd);
     struct TTY_IOQUEUE *ioq;
@@ -142,12 +157,8 @@ uint32_t pipe_write(int32_t fd, const void *buf, uint32_t count) {
     ioq = (struct TTY_IOQUEUE *)file->fd_inode;
     peer = file->proc_aux;
     while (bytes_write < count) {
-        if (ioq_length(ioq) >= BUFSIZE - 1) {
-            if (!pipe_end_alive(peer)) {
-                return bytes_write ? bytes_write : (uint32_t)-1;
-            }
-            mtime_sleep(1);
-            continue;
+        if (!pipe_wait_for_room(ioq, peer)) {
+            return bytes_write ? bytes_write : (uint32_t)-1;
         }
         asm_cli();
         if (ioq_length(ioq) < BUFSIZE - 1) {

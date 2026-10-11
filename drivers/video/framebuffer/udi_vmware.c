@@ -7,28 +7,17 @@ static int vmw_probe(void) {
 }
 
 static int vmw_init(uint32_t *w, uint32_t *h, uint32_t bpp) {
-    (void)w;
-    (void)h;
-    (void)bpp;
     return -1;
 }
 
 static int vmw_alloc_buffer(uint32_t w, uint32_t h, uint32_t bpp, struct GUI_UDI_BUFFER *out) {
-    (void)w;
-    (void)h;
-    (void)bpp;
-    (void)out;
     return -1;
 }
 
 static void vmw_free_buffer(uint64_t handle) {
-    (void)handle;
 }
 
 static int vmw_commit(uint64_t handle, struct GFX_RECT *rects, int n) {
-    (void)handle;
-    (void)rects;
-    (void)n;
     return -1;
 }
 

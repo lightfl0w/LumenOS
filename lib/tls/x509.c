@@ -317,10 +317,7 @@ static int x5_host_match(const uint8_t *pat, uint32_t plen, const char *host, ui
         while (d < hlen && host[d] != '.') {
             d++;
         }
-        if (d == 0 || d >= hlen) {
-            return 0;
-        }
-        if (plen - 2 != hlen - d - 1) {
+        if (d == 0 || d >= hlen || plen - 2 != hlen - d - 1) {
             return 0;
         }
         for (i = 0; i < plen - 2; i++) {

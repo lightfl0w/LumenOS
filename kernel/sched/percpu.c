@@ -1,6 +1,6 @@
-#include "kernel/sched/percpu.h"
+#include "arch/percpu.h"
 #include "arch/seg.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 
 void percpu_init(void) {

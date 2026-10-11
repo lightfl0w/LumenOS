@@ -1,7 +1,7 @@
 #include "drivers/char/serial/console/io.h"
 #include "drivers/video/framebuffer/udi.h"
 #include "drivers/video/framebuffer/vgpu_pci.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 #define VIRTIO_GPU_VENDOR 0x1AF4
@@ -199,7 +199,6 @@ static int vg_parse_caps(uint8_t bus, uint8_t dev) {
                 found |= 2;
             }
         }
-        (void)cap_len;
         cap_ptr = cap_next;
     }
     if (found != 3 || bars[common_bar] == 0 || bars[notify_bar] == 0)
@@ -290,7 +289,6 @@ static int vg_cmd(const void *req, uint32_t reqlen, uint32_t cmd_type) {
     q->desc[d0].len = reqlen;
     q->desc[d0].flags = VIRTQ_DESC_F_NEXT;
     q->desc[d0].next = d1;
-    (void)cmd_type;
     static struct VGPU_CTRL_RESP resp;
     q->desc[d1].addr = vg_v2p(&resp);
     q->desc[d1].len = sizeof(resp);
@@ -302,8 +300,6 @@ static int vg_cmd(const void *req, uint32_t reqlen, uint32_t cmd_type) {
     q->avail->idx = (uint16_t)(avail_idx + 1);
     q->last_used = q->used->idx;
     int rc = vg_kick_and_wait();
-    uint32_t got = q->used->ring[q->last_used % q->size].idx;
-    (void)got;
     q->last_used++;
     q->desc[d1].next = q->free_head;
     __asm__ volatile("sfence" ::: "memory");
@@ -328,7 +324,6 @@ static int vg_probe(void) {
     return 0;
 }
 static int vg_init(uint32_t *w, uint32_t *h, uint32_t bpp) {
-    (void)bpp;
     if (vg.ready)
         return 0;
     vg_cfg_write8(0x14, 0);
@@ -449,7 +444,6 @@ static void vg_free_buffer(uint64_t handle) {
 }
 static int vg_commit_cmds(struct GFX_RECT *rects, int n);
 static int vg_commit(uint64_t handle, struct GFX_RECT *rects, int n) {
-    (void)handle;
     if (vfb.rid == 0)
         return -1;
     int rc = vg_commit_cmds(rects, n);

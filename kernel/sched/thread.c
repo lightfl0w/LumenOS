@@ -1,11 +1,13 @@
 #include "kernel/sched/thread.h"
 #include "arch/cpu.h"
+#include "arch/regs.h"
+#include "arch/syscall/entry.h"
 #include "arch/interrupt/interrupt.h"
 #include "drivers/char/serial/console/io.h"
 #include "drivers/input/keyboard/keyboard.h"
 #include "fs/pbcache.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/sync/sync.h"
 #include "kernel/userprog/process.h"
 #include "kernel/userprog/wait_exit.h"
@@ -90,6 +92,8 @@ void thread_all_unlock(uint32_t flags) {
 }
 
 static inline uint32_t task_slot(struct TASK *t) {
+    if (t == NULL)
+        return 0;
     return (uint32_t)(t - task_table);
 }
 
@@ -204,7 +208,6 @@ void cpu_idle(void) {
 }
 
 static void idle(void *arg) {
-    (void)arg;
     for (;;) {
         if (cpu_id() == 0) {
             pbc_flush_tick();
@@ -517,6 +520,17 @@ int32_t thread_sleep_ticks(uint32_t ticks) {
     return ret;
 }
 
+static void wake_one(struct TASK *t) {
+    if (!t->slot_used || t->pid != wake_pid[t - task_table] || !(t->status & TASK_WAKE_MASK)) {
+        return;
+    }
+    if (t->futex_timed) {
+        t->futex_timed = 0;
+        t->futex_ready = 2;
+    }
+    ready_enqueue(t);
+}
+
 void thread_timer_wake(void) {
     uint32_t f = sched_lock_irq();
     uint64_t m = sleep_bitmap;
@@ -527,14 +541,7 @@ void thread_timer_wake(void) {
             continue;
         }
         sleep_bitmap &= ~(1ULL << slot);
-        struct TASK *t = &task_table[slot];
-        if (t->slot_used && t->pid == wake_pid[slot] && (t->status & TASK_WAKE_MASK)) {
-            if (t->futex_timed) {
-                t->futex_timed = 0;
-                t->futex_ready = 2;
-            }
-            ready_enqueue(t);
-        }
+        wake_one(&task_table[slot]);
     }
     sched_unlock_irq(f);
 }
@@ -755,7 +762,6 @@ struct TASK *pid2thread(int32_t pid) {
 }
 
 void thread_exit(struct TASK *thread_over, int need_schedule) {
-    (void)need_schedule;
     uint32_t f = sched_lock_irq();
     if (thread_over->status == TASK_DIED) {
         sched_unlock_irq(f);
@@ -807,4 +813,19 @@ static void reap_died_threads(void) {
             died_pending--;
         sched_unlock_irq(s2);
     }
+}
+
+void thread_build_child_stack(struct TASK *child, struct ARCH_REGS *parent_frame,
+                              uint32_t user_esp) {
+    uint32_t stack_top = (uint32_t)child->kernel_stack_top;
+    struct ARCH_REGS *child_frame = (struct ARCH_REGS *)(stack_top - sizeof(struct ARCH_REGS));
+    memcpy(child_frame, parent_frame, sizeof(struct ARCH_REGS));
+    child_frame->eax = 0;
+    child_frame->user_esp = user_esp;
+    struct TASK_STACK *ts =
+        (struct TASK_STACK *)((uint8_t *)child_frame - sizeof(struct TASK_STACK));
+    memset(ts, 0, sizeof(struct TASK_STACK));
+    ts->rflags = RFLAGS_INIT;
+    ts->rip = (void (*)(void))arch_thread_entry();
+    child->self_kstack = (uint64_t *)ts;
 }

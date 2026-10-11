@@ -21,12 +21,10 @@ static volatile int usr1_flag;
 static volatile int alarm_flag;
 
 static void usr1_handler(int sig) {
-    (void)sig;
     usr1_flag = 1;
 }
 
 static void alrm_handler(int sig) {
-    (void)sig;
     alarm_flag = 1;
 }
 

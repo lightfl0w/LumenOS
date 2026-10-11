@@ -1,11 +1,11 @@
 #include "fs/pbcache.h"
 
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 
 static void pbc_flush_thread(void *arg);
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/sync/sync.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
@@ -60,6 +60,29 @@ static inline void pbc_unlk(uint32_t f) {
     asm_restore_eflags(f);
 }
 
+static void pbc_pool_init(void) {
+    uint32_t want = PBC_DEV_SLOTS_MAX;
+    while (want >= 64u) {
+        uint8_t *base = (uint8_t *)get_kernel_pages(want * PBC_SLOT_SIZE / PAGE_SIZE);
+        if (base == NULL) {
+            want /= 2u;
+            continue;
+        }
+        for (uint32_t i = 0; i < want; i++) {
+            s_slots[i].data = base + i * PBC_SLOT_SIZE;
+        }
+        s_nr_slots = want;
+        break;
+    }
+    if (want < 64u) {
+        kprintf("pbc: disabled (no memory)\n");
+        s_nr_slots = 0;
+    }
+    pbc_lock.locked = 0;
+    s_pool_ready = 1;
+    kernel_thread("pbcflush", 10, pbc_flush_thread, NULL, 0xF);
+}
+
 int pbc_dev_register(uint32_t dev_id, struct DISK *d, uint32_t start_lba, uint32_t sect_per_block,
                      uint32_t block_size) {
     if (dev_of(dev_id) != NULL) {
@@ -69,25 +92,7 @@ int pbc_dev_register(uint32_t dev_id, struct DISK *d, uint32_t start_lba, uint32
         return -1;
     }
     if (s_pool_ready == 0) {
-        uint32_t want = PBC_DEV_SLOTS_MAX;
-        while (want >= 64u) {
-            uint8_t *base = (uint8_t *)get_kernel_pages(want * PBC_SLOT_SIZE / PAGE_SIZE);
-            if (base != NULL) {
-                for (uint32_t i = 0; i < want; i++) {
-                    s_slots[i].data = base + i * PBC_SLOT_SIZE;
-                }
-                s_nr_slots = want;
-                break;
-            }
-            want /= 2u;
-        }
-        if (want < 64u) {
-            kprintf("pbc: disabled (no memory)\n");
-            s_nr_slots = 0;
-        }
-        pbc_lock.locked = 0;
-        s_pool_ready = 1;
-        kernel_thread("pbcflush", 10, pbc_flush_thread, NULL, 0xF);
+        pbc_pool_init();
     }
     struct PBC_DEV *dv = &s_devs[s_nr_devs++];
     dv->id = dev_id;
@@ -407,7 +412,6 @@ void pbc_flush_all(void) {
 }
 
 static void pbc_flush_thread(void *arg) {
-    (void)arg;
     for (;;) {
         mtime_sleep(1000);
         pbc_flush_all();

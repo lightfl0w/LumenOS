@@ -43,6 +43,21 @@ static void itoa_b(uint32_t value, char **buf_ptr_addr, uint64_t *cap,
     }
 }
 
+static void emit(char **buf_ptr, uint64_t *cap, uint64_t *wanted, char c) {
+    (*wanted)++;
+    if (*cap > 0) {
+        **buf_ptr = c;
+        (*buf_ptr)++;
+        (*cap)--;
+    }
+}
+
+static void emit_str(char **buf_ptr, uint64_t *cap, uint64_t *wanted, const char *s) {
+    for (; *s != '\0'; s++) {
+        emit(buf_ptr, cap, wanted, *s);
+    }
+}
+
 int vsnprintf(char *str, size_t n, const char *format, va_list ap) {
     char *buf_ptr = str;
     const char *fmt = format;
@@ -52,11 +67,7 @@ int vsnprintf(char *str, size_t n, const char *format, va_list ap) {
 
     while ((ch = *fmt) != '\0') {
         if (ch != '%') {
-            wanted++;
-            if (cap > 0) {
-                *buf_ptr++ = ch;
-                cap--;
-            }
+            emit(&buf_ptr, &cap, &wanted, ch);
             fmt++;
             continue;
         }
@@ -72,55 +83,29 @@ int vsnprintf(char *str, size_t n, const char *format, va_list ap) {
         case 'd': {
             int32_t v = va_arg(ap, int);
             if (v < 0) {
-                wanted++;
-                if (cap > 0) {
-                    *buf_ptr++ = '-';
-                    cap--;
-                }
+                emit(&buf_ptr, &cap, &wanted, '-');
                 v = (int32_t)(0u - (uint32_t)v);
             }
             itoa_b((uint32_t)v, &buf_ptr, &cap, &wanted, 10);
             break;
         }
         case 'c':
-            wanted++;
-            if (cap > 0) {
-                *buf_ptr++ = (char)va_arg(ap, int);
-                cap--;
-            }
+            emit(&buf_ptr, &cap, &wanted, (char)va_arg(ap, int));
             break;
         case 's': {
             const char *s = va_arg(ap, const char *);
             if (s == 0) {
                 s = "(null)";
             }
-            while (*s) {
-                wanted++;
-                if (cap > 0) {
-                    *buf_ptr++ = *s;
-                    cap--;
-                }
-                s++;
-            }
+            emit_str(&buf_ptr, &cap, &wanted, s);
             break;
         }
         case '%':
-            wanted++;
-            if (cap > 0) {
-                *buf_ptr++ = '%';
-                cap--;
-            }
+            emit(&buf_ptr, &cap, &wanted, '%');
             break;
         default:
-            wanted += 2;
-            if (cap > 0) {
-                *buf_ptr++ = '%';
-                cap--;
-            }
-            if (cap > 0) {
-                *buf_ptr++ = ch;
-                cap--;
-            }
+            emit(&buf_ptr, &cap, &wanted, '%');
+            emit(&buf_ptr, &cap, &wanted, ch);
             break;
         }
         fmt++;

@@ -38,6 +38,21 @@ struct VFS_MOUNT {
     const struct VFS_OPS *ops;
 };
 
+struct FS_REGISTRATION {
+    const char *name;
+    const struct VFS_OPS *ops;
+
+    int (*probe)(const uint8_t *sb);
+};
+
+extern const struct FS_REGISTRATION __vfs_fs_start[];
+extern const struct FS_REGISTRATION __vfs_fs_end[];
+
+#define VFS_REGISTER(name_str, ops_ptr, probe_fn)                                 \
+    static const struct FS_REGISTRATION __vfs_##probe_fn                          \
+        __attribute__((used, section(".vfs_fs"))) = {                             \
+            .name = (name_str), .ops = (ops_ptr), .probe = (probe_fn) }
+
 int vfs_init(void);
 int vfs_mount(const char *path, const struct VFS_OPS *ops);
 int vfs_unmount(const char *path);

@@ -3,9 +3,9 @@
 #include "arch/tss.h"
 #include "drivers/char/serial/console/io.h"
 #include "fs/file.h"
-#include "kernel/asm/stub.h"
-#include "kernel/asm_func.h"
-#include "kernel/assert.h"
+#include "arch/asm/stub.h"
+#include "arch/asm_func.h"
+#include "lib/assert.h"
 #include "kernel/userprog/exec.h"
 #include "lib/string/str.h"
 #include "mm/bitmap.h"
@@ -120,6 +120,18 @@ static struct MM_SPACE_REF *space_ref_find(uint32_t pml4) {
     }
     return NULL;
 }
+
+static int space_ref_claim(uint32_t pml4) {
+    for (uint32_t i = 0; i < MAX_TASKS; i++) {
+        if (space_ref_table[i].refs == 0) {
+            space_ref_table[i].pml4 = pml4;
+            space_ref_table[i].refs = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void space_ref(uint32_t pml4) {
     if (pml4 == 0) {
         return;
@@ -130,13 +142,7 @@ void space_ref(uint32_t pml4) {
     if (e != NULL) {
         e->refs++;
     } else {
-        for (uint32_t i = 0; i < MAX_TASKS; i++) {
-            if (space_ref_table[i].refs == 0) {
-                space_ref_table[i].pml4 = pml4;
-                space_ref_table[i].refs = 1;
-                break;
-            }
-        }
+        (void)space_ref_claim(pml4);
     }
     asm_restore_eflags(old);
 }
@@ -158,72 +164,97 @@ static uint32_t space_unref(uint32_t pml4) {
     asm_restore_eflags(old);
     return left;
 }
+
+static uint32_t free_user_pt(uint64_t *pt, uint32_t pdp_idx, uint32_t pd_idx,
+                             struct TASK *owner) {
+    uint32_t remaining = 0;
+    for (uint32_t i = 0; i < 512; i++) {
+        if (!(pt[i] & 1)) {
+            continue;
+        }
+        uint64_t vaddr = ((uint64_t)pdp_idx << 30) | ((uint64_t)pd_idx << 21) | ((uint64_t)i << 12);
+        uint32_t bit = (uint32_t)((vaddr - USER_EXEC64_FLOOR) / PAGE_SIZE);
+        int tracked = owner != NULL && vaddr >= USER_EXEC64_FLOOR && vaddr < USER_STACK_TOP &&
+                       bit < owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8 &&
+                       bitmap_scan_test(&owner->userprog_v_addr.vaddr_bitmap, bit) == 1;
+        if (!tracked) {
+            remaining++;
+            continue;
+        }
+        page_free_or_decref_va((uint32_t)PTE_PHYS(pt[i]), (uint32_t)vaddr);
+        pt[i] = 0;
+    }
+    return remaining;
+}
+
+static uint32_t free_user_pd(uint64_t *pd, uint32_t pdp_idx, struct TASK *owner) {
+    uint32_t remaining = 0;
+    for (uint32_t i = 0; i < 512; i++) {
+        if (!(pd[i] & 1)) {
+            continue;
+        }
+
+        if (pd[i] & 0x80) {
+            remaining++;
+            continue;
+        }
+        if (free_user_pt(phys_to_virt(PTE_PHYS(pd[i])), pdp_idx, i, owner) == 0) {
+            page_free_or_decref((uint32_t)PTE_PHYS(pd[i]));
+            pd[i] = 0;
+        } else {
+            remaining++;
+        }
+    }
+    return remaining;
+}
+
+static void free_user_pdp(uint64_t *pdp, struct TASK *owner) {
+    for (uint32_t i = 0; i < 3; i++) {
+        if (!(pdp[i] & 1) || (pdp[i] & 0x80)) {
+            continue;
+        }
+        if (free_user_pd(phys_to_virt(PTE_PHYS(pdp[i])), i, owner) == 0) {
+            page_free_or_decref((uint32_t)PTE_PHYS(pdp[i]));
+            pdp[i] = 0;
+        }
+    }
+}
+
+static void release_addr_bitmap(struct TASK *owner) {
+    uint32_t bytes = owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len;
+    uint32_t pg_cnt = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (uint32_t i = 0; i < pg_cnt; i++) {
+        free_kernel_page((uint32_t)(uintptr_t)owner->userprog_v_addr.vaddr_bitmap.bits +
+                         i * PAGE_SIZE);
+    }
+    owner->userprog_v_addr.vaddr_bitmap.bits = NULL;
+    owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len = 0;
+}
+
 static void space_release_ex(uint32_t pml4_phys, struct TASK *owner, int release_bitmap) {
     if (pml4_phys != 0) {
         uint64_t *pml4 = phys_to_virt(pml4_phys);
-        uint64_t pml4e = pml4[0];
-        if (pml4e & 1) {
-            uint64_t *pdp = phys_to_virt(PTE_PHYS(pml4e));
-            for (uint32_t pdp_idx = 0; pdp_idx < 3; pdp_idx++) {
-                uint64_t pdp_e = pdp[pdp_idx];
-                if (!(pdp_e & 1) || (pdp_e & 0x80)) {
-                    continue;
-                }
-                uint64_t *pd = phys_to_virt(PTE_PHYS(pdp_e));
-                uint32_t pd_remaining = 0;
-                for (uint32_t pd_idx = 0; pd_idx < 512; pd_idx++) {
-                    uint64_t pd_e = pd[pd_idx];
-                    if (!(pd_e & 1)) {
-                        continue;
-                    }
-                    if (pd_e & 0x80) {
-                        pd_remaining++;
-                        continue;
-                    }
-                    uint64_t *pt = phys_to_virt(PTE_PHYS(pd_e));
-                    uint32_t pt_remaining = 0;
-                    for (uint32_t pte_idx = 0; pte_idx < 512; pte_idx++) {
-                        if (!(pt[pte_idx] & 1)) {
-                            continue;
-                        }
-                        uint64_t vaddr = ((uint64_t)pdp_idx << 30) + ((uint64_t)pd_idx << 21) +
-                                         ((uint64_t)pte_idx << 12);
-                        uint32_t bit = (uint32_t)((vaddr - USER_EXEC64_FLOOR) / PAGE_SIZE);
-                        if (owner == NULL || vaddr < USER_EXEC64_FLOOR || vaddr >= 0xc0000000u ||
-                            bit >= owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8 ||
-                            bitmap_scan_test(&owner->userprog_v_addr.vaddr_bitmap, bit) != 1) {
-                            pt_remaining++;
-                            continue;
-                        }
-                        page_free_or_decref_va((uint32_t)PTE_PHYS(pt[pte_idx]), (uint32_t)vaddr);
-                        pt[pte_idx] = 0;
-                    }
-                    if (pt_remaining == 0) {
-                        page_free_or_decref((uint32_t)PTE_PHYS(pd_e));
-                        pd[pd_idx] = 0;
-                    } else {
-                        pd_remaining++;
-                    }
-                }
-                if (pd_remaining == 0) {
-                    page_free_or_decref((uint32_t)PTE_PHYS(pdp_e));
-                    pdp[pdp_idx] = 0;
-                }
-            }
+        if (pml4[0] & 1) {
+            free_user_pdp(phys_to_virt(PTE_PHYS(pml4[0])), owner);
         }
         pfree(&kernel_pool, pml4_phys);
     }
     if (release_bitmap && owner != NULL && owner->userprog_v_addr.vaddr_bitmap.bits != NULL) {
-        uint32_t bytes = owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len;
-        uint32_t pg_cnt = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-        for (uint32_t i = 0; i < pg_cnt; i++) {
-            free_kernel_page((uint32_t)(uintptr_t)owner->userprog_v_addr.vaddr_bitmap.bits +
-                             i * PAGE_SIZE);
-        }
-        owner->userprog_v_addr.vaddr_bitmap.bits = NULL;
-        owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len = 0;
+        release_addr_bitmap(owner);
     }
 }
+
+static void detach_fds(struct TASK *t) {
+    int owns = (t->fd_owner_pid == (int32_t)t->pid);
+    for (uint32_t fd = 3; fd < MAX_FILES_OPEN_PER_PROC; fd++) {
+        uint32_t g = t->fd_table[fd];
+        if (owns && g != (uint32_t)-1 && g < MAX_FILE_OPEN && file_table[g].ref_cnt > 0) {
+            file_table_unref(g);
+        }
+        t->fd_table[fd] = (uint32_t)-1;
+    }
+}
+
 void space_detach_others(struct TASK *owner) {
     uint32_t pml4 = owner->pml4_phys;
     if (pml4 == 0) {
@@ -242,15 +273,7 @@ void space_detach_others(struct TASK *owner) {
         t->userprog_v_addr.vaddr_bitmap.btmp_bytes_len = 0;
         space_unref(pml4);
         list_unlink(&t->wait_tag);
-        for (uint32_t fd_idx = 3; fd_idx < MAX_FILES_OPEN_PER_PROC; fd_idx++) {
-            uint32_t g = t->fd_table[fd_idx];
-            if (t->fd_owner_pid == (int32_t)t->pid && g != (uint32_t)-1 && g < MAX_FILE_OPEN) {
-                if (file_table[g].ref_cnt > 0) {
-                    file_table_unref(g);
-                }
-            }
-            t->fd_table[fd_idx] = (uint32_t)-1;
-        }
+        detach_fds(t);
         thread_exit(t, 0);
     }
 }
@@ -280,10 +303,10 @@ void free_user_space(struct TASK *t, uint32_t pml4_phys) {
 void create_user_vaddr_bitmap(struct TASK *user_prog) {
     user_prog->userprog_v_addr.vaddr_start = USER_EXEC64_FLOOR;
     uint32_t bitmap_pg_cnt =
-        DIV_ROUND_UP((0xc0000000 - USER_EXEC64_FLOOR) / PAGE_SIZE / 8, PAGE_SIZE);
+        DIV_ROUND_UP((USER_STACK_TOP - USER_EXEC64_FLOOR) / PAGE_SIZE / 8, PAGE_SIZE);
     user_prog->userprog_v_addr.vaddr_bitmap.bits = (uint8_t *)get_kernel_pages(bitmap_pg_cnt);
     user_prog->userprog_v_addr.vaddr_bitmap.btmp_bytes_len =
-        (0xc0000000 - USER_EXEC64_FLOOR) / PAGE_SIZE / 8;
+        (USER_STACK_TOP - USER_EXEC64_FLOOR) / PAGE_SIZE / 8;
     bitmap_init(&user_prog->userprog_v_addr.vaddr_bitmap);
 }
 void process_execute(char *path, char *name) {

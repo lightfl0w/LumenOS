@@ -2,7 +2,7 @@
 
 #include "drivers/char/serial/console/io.h"
 #include "drivers/video/framebuffer/vgpu_pci.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "mm/pool.h"
 
 extern struct GUI_UDI_OPS udi_virtio_ops;
@@ -92,11 +92,9 @@ static int sw_alloc_buffer(uint32_t w, uint32_t h, uint32_t bpp, struct GUI_UDI_
 }
 
 static void sw_free_buffer(uint64_t handle) {
-    (void)handle;
 }
 
 static int sw_commit(uint64_t handle, struct GFX_RECT *rects, int n) {
-    (void)handle;
     if (n <= 0)
         return 0;
     if (n > 4) {

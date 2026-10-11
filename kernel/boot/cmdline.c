@@ -72,13 +72,16 @@ void cmdline_init(const char *raw) {
     for (size_t p = 0; p <= len; ++p) {
         char c = (p < len) ? raw[p] : ' ';
         int is_ws = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
-        if (is_ws) {
-            if (tok_start != (size_t)-1) {
-                add_tok(raw + tok_start, p - tok_start);
-                tok_start = (size_t)-1;
+        if (!is_ws) {
+            if (tok_start == (size_t)-1) {
+                tok_start = p;
             }
-        } else if (tok_start == (size_t)-1) {
-            tok_start = p;
+            continue;
+        }
+
+        if (tok_start != (size_t)-1) {
+            add_tok(raw + tok_start, p - tok_start);
+            tok_start = (size_t)-1;
         }
     }
 }
@@ -98,23 +101,24 @@ int cmdline_has_flag(const char *name) {
     return 0;
 }
 
+static int copy_tok_value(const char *value, char *out, size_t out_size) {
+    size_t j = 0;
+    while (value[j] != '\0' && j + 1 < out_size) {
+        out[j] = value[j];
+        ++j;
+    }
+    out[j] = '\0';
+    return 1;
+}
+
 int cmdline_get_value(const char *name, char *out, size_t out_size) {
     if (name == NULL || out == NULL || out_size == 0) {
         return 0;
     }
     out[0] = '\0';
     for (size_t i = 0; i < g_ntoks; ++i) {
-        if (!g_toks[i].has_value) {
-            continue;
-        }
-        if (strcmp(g_toks[i].name, name) == 0) {
-            size_t j = 0;
-            while (g_toks[i].value[j] != '\0' && j + 1 < out_size) {
-                out[j] = g_toks[i].value[j];
-                ++j;
-            }
-            out[j] = '\0';
-            return 1;
+        if (g_toks[i].has_value && strcmp(g_toks[i].name, name) == 0) {
+            return copy_tok_value(g_toks[i].value, out, out_size);
         }
     }
     return 0;

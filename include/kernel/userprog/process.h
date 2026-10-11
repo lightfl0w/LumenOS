@@ -2,19 +2,8 @@
 #define PROCESS_H
 
 #include "kernel/sched/thread.h"
+#include "arch/process_if.h"
 #include <stdint.h>
-
-#define USER_VADDR_START 0x8048000
-#define USER_STACK3_VADDR (0xc0000000 - 0x1000)
-#define USER_HEAP_BASE 0xA0000000
-#define USER_LOW_CEILING 0x40000000u
-#define USER_EXEC64_FLOOR 0x400000u
-#define USER_HIGH_MMIO_END 0x80200000u
-#define USER_STACK_TOP 0xc0000000u
-#define USER_STACK_PAGES 16
-#define USER_STACK_BOTTOM (USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE)
-#define USER_HEAP_LIMIT USER_STACK_BOTTOM
-#define DEFAULT_PRIO 15
 
 void start_process(void *arg);
 void page_dir_activate(struct TASK *task);

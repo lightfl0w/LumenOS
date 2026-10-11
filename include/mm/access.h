@@ -17,4 +17,6 @@ int user_strnlen(const char *src, uint32_t max);
 
 int page_is_mapped(uint32_t v);
 
+void mm_make_user_rx(uint32_t base, uint32_t pages);
+
 #endif

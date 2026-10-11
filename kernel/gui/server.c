@@ -10,7 +10,7 @@
 #include "kernel/gui/wm.h"
 #include "kernel/gui/x11.h"
 #include "kernel/sched/thread.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 
@@ -1105,9 +1105,6 @@ void comp_init(void) {
     dst = d->surface(DISP_BACK);
     gpu_set_target(dst);
 
-    struct GFX_CANVAS *fc = d->surface(DISP_FRONT);
-    (void)fc;
-
     input_init();
     wallpaper_init();
     lock_init(&comp_lock);
@@ -1207,7 +1204,6 @@ void comp_run(void) {
     struct GUI_DISPLAY_OPS *d = display_get();
     while (session_active) {
         perf_report();
-        uint64_t t0 = perf_tsc();
         drain_input();
         wm_anim_step();
         if (wm_bar_check_dirty()) {
@@ -1222,7 +1218,6 @@ void comp_run(void) {
             perf_repaints++;
             perf_repaint_tsc += perf_tsc() - t1;
             perf_loops++;
-            (void)t0;
             continue;
         }
         perf_idle_loops++;

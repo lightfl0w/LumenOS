@@ -4,7 +4,7 @@
 #include "fs/file.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "lib/string/str.h"
 
 #define PTY_EAGAIN 11

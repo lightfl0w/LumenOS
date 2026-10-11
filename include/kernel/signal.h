@@ -2,6 +2,7 @@
 #define SIGNAL_H
 
 #include <stdint.h>
+#include "arch/signal_if.h"
 
 struct TASK;
 struct ARCH_REGS;
@@ -19,7 +20,6 @@ struct ARCH_REGS;
 #define SIGFPE 8
 #define SIGKILL 9
 #define SIGUSR1 10
-#define SIGSEGV 11
 #define SIGUSR2 12
 #define SIGPIPE 13
 #define SIGALRM 14
@@ -82,7 +82,6 @@ uint64_t sys_sigreturn(struct ARCH_REGS *r);
 void check_pending_signals(struct ARCH_REGS *r);
 void itimer_tick(void);
 
-void signal_terminate(struct TASK *t, int sig);
 void signal_notify_child_exit(struct TASK *parent);
 
 int exception_to_signal(int int_no);

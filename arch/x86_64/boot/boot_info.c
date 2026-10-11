@@ -1,4 +1,4 @@
-#include "kernel/boot_info.h"
+#include "arch/boot_info.h"
 #include "arch/x86_64/boot/mb2.h"
 
 static struct BOOT_INFO g_boot;

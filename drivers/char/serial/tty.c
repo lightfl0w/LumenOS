@@ -215,48 +215,52 @@ static char ioq_getchar_sync(struct TTY_IOQUEUE *q) {
 static char line_buf[256];
 static uint32_t line_len = 0;
 static uint32_t line_pos = 0;
+
+static int tty_edit_line(char c, uint32_t *got) {
+    if (c == '\r' && (tty_tios.c_iflag & LINUX_ICRNL)) {
+        c = '\n';
+    }
+    if (c == '\n') {
+        tty_echo(c);
+        if (*got < (uint32_t)sizeof(line_buf)) {
+            line_buf[(*got)++] = '\n';
+        }
+        return 1;
+    }
+    if (c == '\b' || c == 0x7f) {
+        if (*got == 0) {
+            tty_echo('\a');
+            return 0;
+        }
+        (*got)--;
+        tty_echo('\b');
+        tty_echo(' ');
+        tty_echo('\b');
+        return 0;
+    }
+    if (*got + 1 >= (uint32_t)sizeof(line_buf)) {
+        tty_echo('\a');
+        return 0;
+    }
+    line_buf[(*got)++] = c;
+    tty_echo(c);
+    return 0;
+}
+
 static int tty_read_line(char *buf, uint32_t n) {
     if (line_pos >= line_len) {
         uint32_t got = 0;
-        for (;;) {
-            char c = ioq_getchar_sync(&keyboard_ioq);
-            if (c == '\r' && (tty_tios.c_iflag & LINUX_ICRNL))
-                c = '\n';
-            if (c == '\n') {
-                tty_echo(c);
-                if (got < (uint32_t)sizeof(line_buf))
-                    line_buf[got++] = '\n';
-                break;
-            }
-            if (c == '\b' || c == 0x7f) {
-                if (got == 0) {
-                    tty_echo('\a');
-                    continue;
-                }
-                got--;
-                tty_echo('\b');
-                tty_echo(' ');
-                tty_echo('\b');
-                continue;
-            }
-            if (got + 1 >= (uint32_t)sizeof(line_buf)) {
-                tty_echo('\a');
-                continue;
-            }
-            line_buf[got++] = c;
-            tty_echo(c);
+        while (!tty_edit_line(ioq_getchar_sync(&keyboard_ioq), &got)) {
         }
         line_len = got;
         line_pos = 0;
     }
-    {
-        uint32_t avail = line_len - line_pos;
-        uint32_t take = (avail < n) ? avail : n;
-        for (uint32_t i = 0; i < take; i++)
-            buf[i] = line_buf[line_pos + i];
-        line_pos += take;
-        return (int)take;
-    }
+    uint32_t avail = line_len - line_pos;
+    uint32_t take = (avail < n) ? avail : n;
+    for (uint32_t i = 0; i < take; i++)
+        buf[i] = line_buf[line_pos + i];
+    line_pos += take;
+    return (int)take;
 }
 
 static int tty_read_raw(char *buf, uint32_t n) {
@@ -350,7 +354,6 @@ int tty_open(void) {
 }
 
 uint32_t tty_pgid_of(uint32_t pid) {
-    (void)pid;
     return tty_pgrp;
 }
 

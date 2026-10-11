@@ -2,7 +2,7 @@
 #include "arch/mmu.h"
 #include "drivers/char/serial/console/io.h"
 #include "fs/fs.h"
-#include "kernel/assert.h"
+#include "lib/assert.h"
 #include "kernel/sched/thread.h"
 #include "kernel/userprog/process.h"
 #include "lib/string/str.h"

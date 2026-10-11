@@ -1,6 +1,6 @@
 #include "net/icmp.h"
 
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/nt_ping_reply.h"
 #include "lib/string/str.h"
 #include "net/ip.h"
@@ -89,3 +89,5 @@ int nt_icmp_recv(struct NET_PING_REPLY *out, int max) {
     lock_release(&net_lock);
     return n;
 }
+
+IP_PROTO_REGISTER(IPPROTO_ICMP, icmp_input, "icmp");

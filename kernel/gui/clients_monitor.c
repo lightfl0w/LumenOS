@@ -39,7 +39,6 @@ static void clock_render(struct COMP_DEMO_CLIENT *dc) {
 static const struct CLIENT_DESC clock_desc = {"clock", "clock", clock_render, 0, 33};
 
 void clients_clock_thread(void *arg) {
-    (void)arg;
     struct COMP_DEMO_CLIENT dc;
     memset(&dc, 0, sizeof(dc));
     if (client_begin(&dc, &clock_desc) != 0) {
@@ -96,7 +95,6 @@ static void sysmon_render(struct COMP_DEMO_CLIENT *dc) {
 static const struct CLIENT_DESC sysmon_desc = {"sysmon", "sysmon", sysmon_render, 0, 30};
 
 void clients_sysmon_thread(void *arg) {
-    (void)arg;
     struct COMP_DEMO_CLIENT dc;
     memset(&dc, 0, sizeof(dc));
     if (client_begin(&dc, &sysmon_desc) != 0) {
@@ -135,7 +133,6 @@ static void plasma_render(struct COMP_DEMO_CLIENT *dc) {
 static const struct CLIENT_DESC plasma_desc = {"plasma", "plasma", plasma_render, 0, 20};
 
 void clients_plasma_thread(void *arg) {
-    (void)arg;
     struct COMP_DEMO_CLIENT dc;
     memset(&dc, 0, sizeof(dc));
     if (client_begin(&dc, &plasma_desc) != 0) {

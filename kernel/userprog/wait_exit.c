@@ -1,6 +1,6 @@
 #include "kernel/userprog/wait_exit.h"
 #include "fs/file.h"
-#include "kernel/assert.h"
+#include "lib/assert.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "kernel/syscall/futex.h"
@@ -11,25 +11,36 @@
 #include "mm/pool.h"
 #include "uapi/linux_abi.h"
 
+static void clear_child_tid_of(struct TASK *t) {
+    uint32_t addr = t->clear_child_tid;
+    if (addr == 0) {
+        return;
+    }
+    t->clear_child_tid = 0;
+    if (!access_ok((const void *)(uintptr_t)addr, 4, 1)) {
+        return;
+    }
+    *(volatile int32_t *)(uintptr_t)addr = 0;
+    if (t == current) {
+        sys_futex(addr, FUTEX_WAKE, 0x7FFFFFFF, 0, 0, 0);
+    }
+}
+
+static void close_owned_fds(struct TASK *t) {
+    if (t->fd_owner_pid != (int32_t)t->pid) {
+        return;
+    }
+    for (uint32_t fd = 3; fd < MAX_FILES_OPEN_PER_PROC; fd++) {
+        if (t->fd_table[fd] != (uint32_t)-1) {
+            close_file((int)fd);
+        }
+    }
+}
+
 static void release_prog_resource(struct TASK *release_thread) {
-    if (release_thread->clear_child_tid != 0) {
-        uint32_t addr = release_thread->clear_child_tid;
-        release_thread->clear_child_tid = 0;
-        if (access_ok((const void *)(uintptr_t)addr, 4, 1)) {
-            *(volatile int32_t *)(uintptr_t)addr = 0;
-            if (release_thread == current) {
-                sys_futex(addr, FUTEX_WAKE, 0x7FFFFFFF, 0, 0, 0);
-            }
-        }
-    }
+    clear_child_tid_of(release_thread);
     task_release_space(release_thread);
-    for (uint32_t fd_idx = 3; release_thread->fd_owner_pid == (int32_t)release_thread->pid &&
-                              fd_idx < MAX_FILES_OPEN_PER_PROC;
-         fd_idx++) {
-        if (release_thread->fd_table[fd_idx] != (uint32_t)-1) {
-            close_file((int)fd_idx);
-        }
-    }
+    close_owned_fds(release_thread);
 }
 
 void kill_orphan_children(int32_t parent_pid) {
@@ -53,6 +64,42 @@ void kill_orphan_children(int32_t parent_pid) {
     }
 }
 
+static void find_child(struct TASK *parent, int32_t want_pid, struct TASK **out_hanging,
+                       int *out_any) {
+    struct TASK *hanging = NULL;
+    int any = 0;
+    uint32_t f = thread_all_lock();
+    struct LIST_ELEM *e = thread_all_list.head.next;
+    while (e != &thread_all_list.tail) {
+        struct TASK *t = list_entry(e, struct TASK, all_list_tag);
+        e = e->next;
+        if (t->parent_pid != (int32_t)parent->pid) {
+            continue;
+        }
+        if (want_pid > 0 && (int32_t)t->pid != want_pid) {
+            continue;
+        }
+        any = 1;
+        if (t->status == TASK_HANGING) {
+            hanging = t;
+            break;
+        }
+    }
+    thread_all_unlock(f);
+    *out_hanging = hanging;
+    *out_any = any;
+}
+
+static pid_t reap_child(struct TASK *hanging, int32_t *status) {
+    if (hanging == NULL) {
+        return -1;
+    }
+    *status = hanging->exit_status;
+    uint32_t child_pid = hanging->pid;
+    thread_exit(hanging, 0);
+    return (pid_t)child_pid;
+}
+
 pid_t sys_wait(int32_t *status) {
     struct TASK *parent = current;
     int32_t ignored_status;
@@ -62,25 +109,10 @@ pid_t sys_wait(int32_t *status) {
     for (;;) {
         struct TASK *hanging = NULL;
         int have_child = 0;
-        uint32_t f = thread_all_lock();
-        struct LIST_ELEM *e = thread_all_list.head.next;
-        while (e != &thread_all_list.tail) {
-            struct TASK *t = list_entry(e, struct TASK, all_list_tag);
-            if (t->parent_pid == (int32_t)parent->pid) {
-                have_child = 1;
-                if (t->status == TASK_HANGING) {
-                    hanging = t;
-                    break;
-                }
-            }
-            e = e->next;
-        }
-        thread_all_unlock(f);
-        if (hanging != NULL) {
-            *status = hanging->exit_status;
-            uint32_t child_pid = hanging->pid;
-            thread_exit(hanging, 0);
-            return child_pid;
+        find_child(parent, -1, &hanging, &have_child);
+        pid_t reaped = reap_child(hanging, status);
+        if (reaped >= 0) {
+            return reaped;
         }
         if (!have_child) {
             return -1;
@@ -98,31 +130,10 @@ pid_t sys_wait4(int32_t pid, int32_t *status, uint32_t options) {
     for (;;) {
         struct TASK *hanging = NULL;
         int have_child = 0;
-        uint32_t f = thread_all_lock();
-        struct LIST_ELEM *e = thread_all_list.head.next;
-        while (e != &thread_all_list.tail) {
-            struct TASK *t = list_entry(e, struct TASK, all_list_tag);
-            if (t->parent_pid != (int32_t)parent->pid) {
-                e = e->next;
-                continue;
-            }
-            if (pid > 0 && (int32_t)t->pid != pid) {
-                e = e->next;
-                continue;
-            }
-            have_child = 1;
-            if (t->status == TASK_HANGING) {
-                hanging = t;
-                break;
-            }
-            e = e->next;
-        }
-        thread_all_unlock(f);
-        if (hanging != NULL) {
-            *status = hanging->exit_status;
-            uint32_t child_pid = hanging->pid;
-            thread_exit(hanging, 0);
-            return (pid_t)child_pid;
+        find_child(parent, pid, &hanging, &have_child);
+        pid_t reaped = reap_child(hanging, status);
+        if (reaped >= 0) {
+            return reaped;
         }
         if (!have_child) {
             return -1;

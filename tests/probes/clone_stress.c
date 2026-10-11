@@ -28,7 +28,6 @@ static int thread_add(void *arg) {
     return 0;
 }
 static int thread_copy(void *arg) {
-    (void)arg;
     shared = 77;
     exit(0);
     return 0;

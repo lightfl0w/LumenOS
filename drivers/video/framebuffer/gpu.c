@@ -340,6 +340,32 @@ static void exec_roundfill(const struct GPU_CMD *c) {
     }
 }
 
+static void blend_shadow_row(gfx_color *d, const gfx_color *s, int cx0, int cx1, int ly, int blur,
+                             int fh, int fw, int rad, int alpha) {
+    int lend = (cx1 < blur) ? cx1 : blur;
+    if (cx0 < lend) {
+        blend_run(d, s, lend - cx0, alpha);
+    }
+    int r0 = (cx0 > fw + blur) ? cx0 : fw + blur;
+    if (r0 < cx1) {
+        blend_run(d + (r0 - cx0), s + (r0 - cx0), cx1 - r0, alpha);
+    }
+    if (ly >= blur + rad && ly < blur + fh - rad) {
+        return;
+    }
+    int spans[2][2] = {
+        {blur, blur + rad},
+        {blur + fw - rad, blur + fw},
+    };
+    for (int si = 0; si < 2; si++) {
+        int s0 = spans[si][0] > cx0 ? spans[si][0] : cx0;
+        int s1 = spans[si][1] < cx1 ? spans[si][1] : cx1;
+        if (s0 < s1) {
+            blend_run(d + (s0 - cx0), s + (s0 - cx0), s1 - s0, alpha);
+        }
+    }
+}
+
 static void exec_shadow(const struct GPU_CMD *c) {
     if (!gpu_dst || !c->src || !c->src->pixels || c->alpha <= 0)
         return;
@@ -372,32 +398,12 @@ static void exec_shadow(const struct GPU_CMD *c) {
             return;
         const gfx_color *s = gfx_px_at_c(sp, soff);
         gfx_color *d = gfx_px_at(gpu_dst, doff);
-        if (ly >= blur && ly < blur + fh) {
-            int lend = (cx1 < blur) ? cx1 : blur;
-            if (cx0 < lend)
-                blend_run(d, s, lend - cx0, c->alpha);
-            int r0 = (cx0 > fw + blur) ? cx0 : fw + blur;
-            if (r0 < cx1)
-                blend_run(d + (r0 - cx0), s + (r0 - cx0), cx1 - r0, c->alpha);
+        if (ly < blur || ly >= blur + fh) {
 
-            if (ly < blur + rad || ly >= blur + fh - rad) {
-                int spans[2][2] = {
-                    {blur, blur + rad},
-                    {blur + fw - rad, blur + fw},
-                };
-                for (int si = 0; si < 2; si++) {
-                    int s0 = spans[si][0], s1 = spans[si][1];
-                    if (s0 < cx0)
-                        s0 = cx0;
-                    if (s1 > cx1)
-                        s1 = cx1;
-                    if (s0 < s1)
-                        blend_run(d + (s0 - cx0), s + (s0 - cx0), s1 - s0, c->alpha);
-                }
-            }
-        } else {
             blend_run(d, s, span, c->alpha);
+            continue;
         }
+        blend_shadow_row(d, s, cx0, cx1, ly, blur, fh, fw, rad, c->alpha);
     }
 }
 

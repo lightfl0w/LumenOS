@@ -1,7 +1,7 @@
 #include "net/udp.h"
 
 #include "drivers/char/serial/console/io.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "net/ip.h"
 #include "net/net.h"
@@ -14,26 +14,16 @@ void udp_init(void) {
     memset(s_upcb, 0, sizeof s_upcb);
 }
 
-static uint16_t udp_sum(const uint8_t *pkt, uint32_t len, uint32_t saddr, uint32_t daddr) {
+static uint16_t udp_sum(const uint8_t *pkt, uint32_t len, uint32_t saddr,
+                        uint32_t daddr) {
     uint32_t sum = 0;
     sum += (saddr >> 16) & 0xffff;
     sum += saddr & 0xffff;
     sum += (daddr >> 16) & 0xffff;
     sum += daddr & 0xffff;
     sum += 0x0011;
-    sum += (uint32_t)len;
-    const uint8_t *p = pkt;
-    uint32_t n = len;
-    while (n > 1) {
-        sum += ((uint16_t)p[0] << 8) | p[1];
-        p += 2;
-        n -= 2;
-    }
-    if (n)
-        sum += (uint16_t)p[0] << 8;
-    while (sum >> 16)
-        sum = (uint16_t)sum + (sum >> 16);
-    return (uint16_t)~sum;
+    sum += len;
+    return net_csum_fold(net_csum_add(sum, pkt, len));
 }
 
 struct UDP_PCB *udp_pcb_alloc(void) {
@@ -196,3 +186,5 @@ void udp_input(NETIF *ifp, uint32_t src, const uint8_t *pkt, uint32_t len) {
         udp_rx_put(pcb, data, dlen, src, sport);
     lock_release(&net_lock);
 }
+
+IP_PROTO_REGISTER(IPPROTO_UDP, udp_input, "udp");

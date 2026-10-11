@@ -3,62 +3,46 @@
 #include "drivers/block/ata/block.h"
 #include "fs/proc.h"
 #include "fs/vfs/vfs.h"
+#include "lib/printf/printf.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 #include "ops/block_ops.h"
 
-static const struct VFS_OPS ext2_ops = {
-    ext2_init,           ext2_partition,        ext2_lookup,     ext2_lookup_ftype,
-    ext2_abs_path,       ext2_read_link_target, ext2_read_inode, ext2_read_from_inode,
-    ext2_dir_next,       ext2_new_inode,        ext2_free_inode, ext2_write_inode,
-    ext2_write_to_inode, ext2_truncate_inode,   ext2_add_entry,  ext2_add_entry_dt,
-    ext2_remove_entry,   ext2_statfs_info,
-};
-
-static const struct VFS_OPS ext4_ops = {
-    ext4_init,           ext4_partition,        ext4_lookup,     ext4_lookup_ftype,
-    ext4_abs_path,       ext4_read_link_target, ext4_read_inode, ext4_read_from_inode,
-    ext4_dir_next,       ext4_new_inode,        ext4_free_inode, ext4_write_inode,
-    ext4_write_to_inode, ext4_truncate_inode,   ext4_add_entry,  ext4_add_entry_dt,
-    ext4_remove_entry,   ext4_statfs_info,
-};
-
-#define FS_DRV_NONE 0
-#define FS_DRV_EXT2 1
-#define FS_DRV_EXT4 2
-
-static const struct VFS_OPS *g_root_ops = &ext2_ops;
+static const struct VFS_OPS *g_root_ops = NULL;
 static struct VFS_MOUNT g_mounts[VFS_MAX_MOUNTS];
 
-static int fs_probe(void) {
+static const struct FS_REGISTRATION *probe_superblock(const uint8_t *sb) {
+    for (const struct FS_REGISTRATION *r = __vfs_fs_start; r < __vfs_fs_end; r++) {
+        if (r->probe(sb)) {
+            return r;
+        }
+    }
+    return NULL;
+}
+
+static const struct FS_REGISTRATION *probe_partition(struct DISK_PARTITION *p) {
+    uint8_t *buf = (uint8_t *)get_kernel_pages(1);
+    if (buf == NULL) {
+        return NULL;
+    }
+    memset(buf, 0, PAGE_SIZE);
+    BLOCK.read_sectors(p->my_disk, p->start_lba, buf, 4);
+    const struct FS_REGISTRATION *hit = probe_superblock(buf + 1024);
+    free_kernel_page((uint32_t)buf);
+    return hit;
+}
+
+static const struct FS_REGISTRATION *fs_probe(void) {
     struct LIST_ELEM *e = partition_list.head.next;
     while (e != &partition_list.tail) {
-        struct DISK_PARTITION *p = list_entry(e, struct DISK_PARTITION, part_tag);
-        uint8_t *buf = (uint8_t *)get_kernel_pages(1);
-        if (buf == NULL) {
-            return FS_DRV_NONE;
-        }
-        memset(buf, 0, PAGE_SIZE);
-        BLOCK.read_sectors(p->my_disk, p->start_lba, buf, 4);
-        uint8_t *sb = buf + 1024;
-        int drv = FS_DRV_NONE;
-        if (*(uint16_t *)(sb + 0x38) == EXT4_SUPER_MAGIC) {
-            uint32_t incompat = *(uint32_t *)(sb + 0x60);
-            uint32_t ro_compat = *(uint32_t *)(sb + 0x64);
-            if ((incompat & (EXT4_FEATURE_INCOMPAT_EXTENTS | EXT4_FEATURE_INCOMPAT_64BIT)) ||
-                (ro_compat & EXT4_FEATURE_RO_COMPAT_METADATA_CSUM)) {
-                drv = FS_DRV_EXT4;
-            } else {
-                drv = FS_DRV_EXT2;
-            }
-        }
-        free_kernel_page((uint32_t)buf);
-        if (drv != FS_DRV_NONE) {
-            return drv;
+        const struct FS_REGISTRATION *hit =
+            probe_partition(list_entry(e, struct DISK_PARTITION, part_tag));
+        if (hit != NULL) {
+            return hit;
         }
         e = e->next;
     }
-    return FS_DRV_NONE;
+    return NULL;
 }
 
 static uint32_t vfs_prefix_match(const char *path, const char *mnt) {
@@ -113,11 +97,10 @@ const struct VFS_MOUNT *vfs_mount_at(int idx) {
 }
 
 const char *vfs_ops_name(const struct VFS_OPS *ops) {
-    if (ops == &ext4_ops) {
-        return "ext4";
-    }
-    if (ops == &ext2_ops) {
-        return "ext2";
+    for (const struct FS_REGISTRATION *r = __vfs_fs_start; r < __vfs_fs_end; r++) {
+        if (r->ops == ops) {
+            return r->name;
+        }
     }
     if (ops == proc_vfs_ops()) {
         return "proc";
@@ -177,7 +160,13 @@ int vfs_init(void) {
 }
 
 int fs_init(void) {
-    g_root_ops = fs_probe() == FS_DRV_EXT4 ? &ext4_ops : &ext2_ops;
+    const struct FS_REGISTRATION *hit = fs_probe();
+    if (hit != NULL) {
+        g_root_ops = hit->ops;
+    } else {
+        kprintf("[fs] no registered filesystem matched the boot partition\n");
+        return -1;
+    }
     vfs_init();
     return g_root_ops->init();
 }

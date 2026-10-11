@@ -30,6 +30,9 @@ extern struct GDT_DESC gdt[GDT_ENTRIES];
 
 void gdt_init(void);
 void set_tss_desc(uint64_t tss_base, uint32_t tss_limit);
+
+void desc_init(struct GDT_DESC *d, uint64_t base, uint32_t limit, uint8_t attr_low,
+               uint8_t attr_high);
 void tss_desc_init(struct GDT_DESC *d, uint64_t base, uint32_t limit);
 void tls_desc_set_base(uint32_t base);
 #endif

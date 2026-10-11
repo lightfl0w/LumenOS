@@ -1,7 +1,7 @@
 #include "net/tcp.h"
 #include "drivers/char/serial/console/io.h"
 
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "lib/string/str.h"
 #include "net/ip.h"
 #include "net/net.h"
@@ -11,11 +11,8 @@
 
 static struct TCP_PCB s_pcb[MAX_TCP_PCB];
 
-static uint8_t s_rand_seed;
-
 void tcp_init(void) {
     memset(s_pcb, 0, sizeof s_pcb);
-    s_rand_seed = 0x5A;
 }
 
 static uint32_t tcp_iss(void) {
@@ -26,7 +23,8 @@ static inline int seq_lt(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
 }
 
-static uint16_t tcp_sum(const uint8_t *seg, uint32_t seglen, uint32_t saddr, uint32_t daddr) {
+static uint16_t tcp_sum(const uint8_t *seg, uint32_t seglen, uint32_t saddr,
+                        uint32_t daddr) {
     uint32_t sum = 0;
     sum += (saddr >> 16) & 0xffff;
     sum += saddr & 0xffff;
@@ -34,18 +32,7 @@ static uint16_t tcp_sum(const uint8_t *seg, uint32_t seglen, uint32_t saddr, uin
     sum += daddr & 0xffff;
     sum += 0x0006;
     sum += seglen;
-    const uint8_t *p = seg;
-    uint32_t n = seglen;
-    while (n > 1) {
-        sum += ((uint16_t)p[0] << 8) | p[1];
-        p += 2;
-        n -= 2;
-    }
-    if (n)
-        sum += (uint16_t)p[0] << 8;
-    while (sum >> 16)
-        sum = (uint16_t)sum + (sum >> 16);
-    return (uint16_t)~sum;
+    return net_csum_fold(net_csum_add(sum, seg, seglen));
 }
 
 #if NET_TRACE_ENABLE
@@ -175,7 +162,6 @@ static void tcp_fire(NETIF *ifp, struct TCP_PCB *pcb) {
 }
 
 int tcp_bind(struct TCP_PCB *pcb, uint32_t ip, uint16_t port) {
-    (void)ip;
     lock_acquire(&net_lock);
     for (int i = 0; i < MAX_TCP_PCB; i++) {
         struct TCP_PCB *other = &s_pcb[i];
@@ -647,3 +633,5 @@ void tcp_tick(NETIF *ifp) {
     }
     lock_release(&net_lock);
 }
+
+IP_PROTO_REGISTER(IPPROTO_TCP, tcp_input, "tcp");

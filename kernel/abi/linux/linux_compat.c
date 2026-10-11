@@ -13,14 +13,14 @@
 #include "fs/proc.h"
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "kernel/syscall/file_syscall.h"
 #include "kernel/syscall/futex.h"
 #include "kernel/syscall/mmap.h"
-#include "kernel/time/pit.h"
+#include "arch/time/pit.h"
 #include "kernel/userprog/clone.h"
 #include "kernel/userprog/exec.h"
 #include "kernel/userprog/fork.h"
@@ -46,30 +46,15 @@ typedef int64_t (*LcFn)(struct ARCH_REGS *r, uint64_t a, uint64_t b, uint64_t c,
                         uint64_t e, uint64_t f);
 
 int64_t lc_stub_ok(LC_ARGS) {
-    (void)r;
-    (void)a;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     return 0;
 }
 
 int64_t lc_stub_enotsup(LC_ARGS) {
-    (void)r;
-    (void)a;
-    (void)b;
-    (void)c;
-    (void)d;
-    (void)e;
-    (void)f;
     return -LINUX_EOPNOTSUPP;
 }
 
 __attribute__((noreturn)) int64_t lc_exit_group(struct ARCH_REGS *r, uint64_t a, uint64_t b,
                                                 uint64_t c, uint64_t d, uint64_t e, uint64_t f) {
-    (void)r;
     sys_exit((int32_t)a);
     for (;;) {
     }

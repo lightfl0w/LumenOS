@@ -1,6 +1,6 @@
 #include "drivers/bus/pci/pci.h"
 
-#include "kernel/asm_func.h"
+#include "arch/asm_func.h"
 
 #define PCI_CONFIG_ADDR 0xCF8u
 #define PCI_CONFIG_DATA 0xCFCu

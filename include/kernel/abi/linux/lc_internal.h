@@ -3,9 +3,11 @@
 
 #include <stdint.h>
 
+#include "fs/file.h"
 #include "fs/fs.h"
 #include "kernel/abi/linux/linux_compat.h"
-#include "kernel/asm/stub.h"
+#include "arch/asm/stub.h"
+#include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "mm/access.h"
 #include "uapi/linux_abi.h"
@@ -254,5 +256,13 @@ int64_t lc_statx(LC_ARGS);
 int64_t lc_stub_ok(LC_ARGS);
 int64_t lc_stub_enotsup(LC_ARGS);
 void unix_close_slot(int idx);
+
+static inline struct FILE *lc_file_from_fd(uint64_t local_fd) {
+
+    if (local_fd >= MAX_FILES_OPEN_PER_PROC) {
+        return NULL;
+    }
+    return file_get(fd_local2global((uint32_t)local_fd));
+}
 
 #endif
