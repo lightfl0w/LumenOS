@@ -728,6 +728,30 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             tasks.append(link_musl_user(
                 "test_memfd.elf", BUILD_DIR / "memfdtest.elf",
                 [BUILD_DIR / "memfd_test.o"]))
+            wl_smoke_c = task_cc(
+                "test_wlsmoke.o", TESTS / "probes" / "wlsmoke.c",
+                BUILD_DIR / "wlsmoke.o", tools,
+                MUSL_DEMO_CFLAGS + ["-I", str(ROOT / "third_party" / "wayland" / "src"),
+                                     "-I", str(ROOT / "third_party" / "wayland"),
+                                     "-I", str(BUILD_DIR / "wayland-gen")])
+            wl_smoke_c.optional = True
+            wl_smoke_c.group = "musl"
+            tasks.append(wl_smoke_c)
+            wl_smoke_link = Task(
+                name="test_wlsmoke.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "wlsmoke.o"), str(MUSL_LIB / "crtn.o"),
+                     str(BUILD_DIR / "wayland" / "libwayland-client.a"),
+                     str(BUILD_DIR / "wayland" / "libwayland-server.a"),
+                     str(BUILD_DIR / "ffi" / "lib" / "libffi.a"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "wlsmoke.elf")],
+                out=BUILD_DIR / "wlsmoke.elf",
+                optional=True, group="musl",
+                description="link wlsmoke.elf (wayland smoke)")
+            tasks.append(wl_smoke_link)
         sh_c = task_cc("musl_sh.o", USER_DIR / "apps" / "sh.c", BUILD_DIR / "sh.o",
                        tools, MUSL_DEMO_CFLAGS)
         sh_c.optional = True
@@ -798,6 +822,106 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                          ARCH["cargo_cc_var"]: str(_musl_clang)},
                     optional=True, group="musl",
                     description="cargo build fish.elf"))
+        ffi_prefix = BUILD_DIR / "ffi"
+        wl_src = ROOT / "third_party" / "wayland"
+        wl_build = BUILD_DIR / "wayland"
+        linux_inc = BUILD_DIR / "linux-include"
+        ffi_script = (
+            "set -e; " + _musl_pick +
+            f"mkdir -p {shlex.quote(str(MUSL_INC / 'linux'))} "
+            f"{shlex.quote(str(MUSL_INC / 'asm'))} "
+            f"{shlex.quote(str(MUSL_INC / 'asm-generic'))}; "
+            "for h in limits.h types.h posix_types.h stddef.h; do "
+            f"cp {shlex.quote(str(linux_inc / 'linux'))}/$h "
+            f"{shlex.quote(str(MUSL_INC / 'linux'))}/ || true; done; "
+            f"cp -r {shlex.quote(str(linux_inc / 'asm'))}/. "
+            f"{shlex.quote(str(MUSL_INC / 'asm'))}/ || true; "
+            f"cp -r {shlex.quote(str(linux_inc / 'asm-generic'))}/. "
+            f"{shlex.quote(str(MUSL_INC / 'asm-generic'))}/ || true; "
+            f"FF={shlex.quote(str(ROOT / 'third_party' / 'libffi'))}; "
+            f"FFB={shlex.quote(str(ffi_prefix / 'build'))}; "
+            f"mkdir -p \"$FFB\"; "
+            "cd \"$FF\"; "
+            "test -f configure || ./autogen.sh >/dev/null 2>&1; "
+            "test -f configure || exit 1; "
+            'CC="$MC" ./configure --disable-shared --disable-exec-static-tramp '
+            "--disable-docs CFLAGS='-Os -fPIC -std=gnu17' "
+            ">/dev/null 2>&1 || exit 1; "
+            f"FFH={shlex.quote(str(ffi_prefix / 'include'))}; "
+            f"FFO={shlex.quote(str(ffi_prefix / 'obj'))}; "
+            f"FFL={shlex.quote(str(ffi_prefix / 'lib'))}; "
+            'mkdir -p "$FFH" "$FFO" "$FFL"; '
+            f"BD=$(ls -d {shlex.quote(str(ROOT / 'third_party' / 'libffi'))}/x86_64-pc-*/ 2>/dev/null | head -1); "
+            'cp "$FF"/include/ffi.h "$FF"/include/ffitarget.h "$FFH"/ 2>/dev/null '
+            '|| cp "$BD"/include/ffi.h "$BD"/include/ffitarget.h "$FFH"/; '
+            'cp "$FF"/fficonfig.h "$FFH"/ 2>/dev/null '
+            '|| cp "$BD"/fficonfig.h "$FFH"/; '
+            'test -f "$FFH"/ffi.h && test -f "$FFH"/fficonfig.h || exit 1; '
+            'for f in prep_cif types raw_api java_raw_api closures debug; do '
+            '"$MC" -c "$FF"/src/$f.c -o "$FFO"/$f.o -O2 -fPIC -std=gnu17 '
+            '-I"$FF"/src -I"$FF"/src/x86 -I"$FF"/include -I"$FFH" 2>/dev/null; done; '
+            '"$MC" -c "$FF"/src/x86/ffi64.c -o "$FFO"/ffi64.o -O2 -fPIC -std=gnu17 '
+            '-I"$FF"/src -I"$FF"/src/x86 -I"$FF"/include -I"$FFH" 2>/dev/null; '
+            '"$MC" -c "$FF"/src/x86/ffiw64.c -o "$FFO"/ffiw64.o -O2 -fPIC -std=gnu17 '
+            '-I"$FF"/src -I"$FF"/src/x86 -I"$FF"/include -I"$FFH" 2>/dev/null; '
+            '"$MC" -c "$FF"/src/x86/unix64.S -o "$FFO"/unix64.o '
+            '-I"$FF"/src/x86 -I"$FF"/include -I"$FFH" 2>/dev/null; '
+            '"$MC" -c "$FF"/src/x86/win64.S -o "$FFO"/win64.o '
+            '-I"$FF"/include -I"$FF"/src/x86 -I"$FFH" 2>/dev/null; '
+            'cd "$FFO"; '
+            'llvm-ar rcs "$FFL"/libffi.a *.o'
+        )
+        tasks.append(Task(
+            name="libffi-static-lib",
+            cmd=[sh, "-c", ffi_script],
+            out=ffi_prefix / "lib" / "libffi.a",
+            deps=[MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static libffi against musl"))
+
+        wl_gen = BUILD_DIR / "wayland-gen"
+        wl_xml = wl_src / "protocol" / "wayland.xml"
+        wl_script = (
+            "set -e; "
+            f"mkdir -p {shlex.quote(str(wl_build))} {shlex.quote(str(wl_gen))}; "
+            f"printf '#define HAVE_MEMFD_CREATE 1\\n#define HAVE_ACCEPT4 1\\n' "
+            f"> {shlex.quote(str(wl_src / 'config.h'))}; "
+            "command -v wayland-scanner >/dev/null 2>&1 || exit 0; "
+            f"wayland-scanner private-code < {shlex.quote(str(wl_xml))} "
+            f"> {shlex.quote(str(wl_gen / 'wayland-protocol.c'))}; "
+            f"wayland-scanner client-header < {shlex.quote(str(wl_xml))} "
+            f"> {shlex.quote(str(wl_gen / 'wayland-client-protocol.h'))}; "
+            f"wayland-scanner server-header < {shlex.quote(str(wl_xml))} "
+            f"> {shlex.quote(str(wl_gen / 'wayland-server-protocol.h'))}; "
+            f"MC={shlex.quote(str(_musl_clang))}; "
+            '[ -x "$MC" ] || exit 0; '
+            f"WIF={shlex.quote(str(ffi_prefix / 'include'))}; "
+            "for f in wayland-util connection wayland-os wayland-client "
+            "wayland-server wayland-shm event-loop; do "
+            f'"$MC" -c {shlex.quote(str(wl_src / "src"))}/$f.c '
+            f"-o {shlex.quote(str(wl_build))}/$f.o -O2 -fPIC -std=gnu17 "
+            f"-I{shlex.quote(str(wl_src / 'src'))} -I{shlex.quote(str(wl_src))} "
+            f"-I{shlex.quote(str(wl_gen))} -I$WIF "
+            f"-I{shlex.quote(str(MUSL_INC))} 2>/dev/null; done; "
+            f'"$MC" -c {shlex.quote(str(wl_gen / "wayland-protocol.c"))} '
+            f"-o {shlex.quote(str(wl_build))}/wayland-protocol.o -O2 -fPIC -std=gnu17 "
+            f"-I{shlex.quote(str(wl_src / 'src'))} -I{shlex.quote(str(wl_gen))} "
+            f"-I{shlex.quote(str(MUSL_INC))} 2>/dev/null; "
+            f"cd {shlex.quote(str(wl_build))}; "
+            "llvm-ar rcs libwayland-client.a wayland-util.o wayland-os.o "
+            "connection.o wayland-protocol.o wayland-client.o; "
+            "llvm-ar rcs libwayland-server.a wayland-util.o wayland-os.o "
+            "connection.o wayland-protocol.o wayland-server.o "
+            "wayland-shm.o event-loop.o"
+        )
+        tasks.append(Task(
+            name="wayland-static-libs",
+            cmd=[sh, "-c", wl_script],
+            out=wl_build / "libwayland-server.a",
+            deps=[ffi_prefix / "lib" / "libffi.a"],
+            optional=True, group="musl-lib",
+            description="build static libwayland against musl"))
+
         if (PCRE2_SRC / "configure").exists():
             pcre2_script = (
                 "set -e; "

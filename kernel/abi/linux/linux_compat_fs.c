@@ -868,11 +868,27 @@ int64_t lc_memfd_create(LC_ARGS) {
     return fd < 0 ? -LINUX_EMFILE : fd;
 }
 
+static int pseudo_fd_slot(int32_t fd) {
+    int i = evfd_slot(fd);
+    if (i < 0)
+        i = tfd_slot(fd);
+    if (i < 0)
+        i = ep_slot(fd);
+    if (i < 0)
+        i = unix_fd_slot((uint64_t)fd);
+    return i;
+}
+
 int64_t lc_fcntl(LC_ARGS) {
     int uslot = unix_fd_slot((uint64_t)a);
     if (uslot >= 0) {
         if ((int32_t)b == LINUX_F_SETFL)
             unix_set_nonblock(uslot, (c & LINUX_O_NONBLOCK) != 0);
+        return 0;
+    }
+    if (pseudo_fd_slot((int32_t)a) >= 0) {
+        if ((int32_t)b == LINUX_F_DUPFD || (int32_t)b == LINUX_F_DUPFD_CLOEXEC)
+            return a;
         return 0;
     }
     return sys_fcntl((int32_t)a, (int32_t)b, c);
