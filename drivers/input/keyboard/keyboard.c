@@ -3,6 +3,7 @@
 #include "drivers/char/serial/tty.h"
 #include "drivers/driver_ops.h"
 #include "arch/x86_64/irq.h"
+#include "kernel/input/evdev.h"
 
 #include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
@@ -23,11 +24,6 @@ static int keyboard_drv(void) {
 
 DRIVER_REGISTER("keyboard", 10, keyboard_drv);
 
-void keyboard_init(void) {
-    ioq_init(&keyboard_ioq);
-    keyboard_flush_pending();
-}
-
 #define SC_SHIFT_L_DOWN 0x2A
 #define SC_SHIFT_R_DOWN 0x36
 #define SC_SHIFT_L_UP 0xAA
@@ -44,6 +40,46 @@ void keyboard_init(void) {
 
 struct TTY_IOQUEUE keyboard_ioq;
 
+static struct evdev_dev *evdev_kbd;
+
+static const uint16_t sc_to_key[128] = {
+    [1] = KEY_ESC,
+    [2] = KEY_1, [3] = KEY_2, [4] = KEY_3, [5] = KEY_4, [6] = KEY_5, [7] = KEY_6,
+    [8] = KEY_7, [9] = KEY_8, [10] = KEY_9, [11] = KEY_0,
+    [12] = KEY_MINUS, [13] = KEY_EQUAL, [14] = KEY_BACKSPACE, [15] = KEY_TAB,
+    [16] = KEY_Q, [17] = KEY_W, [18] = KEY_E, [19] = KEY_R, [20] = KEY_T, [21] = KEY_Y,
+    [22] = KEY_U, [23] = KEY_I, [24] = KEY_O, [25] = KEY_P,
+    [26] = KEY_LEFTBRACE, [27] = KEY_RIGHTBRACE, [28] = KEY_ENTER, [29] = KEY_LEFTCTRL,
+    [30] = KEY_A, [31] = KEY_S, [32] = KEY_D, [33] = KEY_F, [34] = KEY_G, [35] = KEY_H,
+    [36] = KEY_J, [37] = KEY_K, [38] = KEY_L,
+    [39] = KEY_SEMICOLON, [40] = KEY_APOSTROPHE, [41] = KEY_GRAVE, [42] = KEY_LEFTSHIFT,
+    [43] = KEY_BACKSLASH,
+    [44] = KEY_Z, [45] = KEY_X, [46] = KEY_C, [47] = KEY_V, [48] = KEY_B, [49] = KEY_N,
+    [50] = KEY_M,
+    [51] = KEY_COMMA, [52] = KEY_DOT, [53] = KEY_SLASH, [54] = KEY_RIGHTSHIFT,
+    [55] = KEY_KPASTERISK, [56] = KEY_LEFTALT, [57] = KEY_SPACE, [58] = KEY_CAPSLOCK,
+    [59] = KEY_F1, [60] = KEY_F2, [61] = KEY_F3, [62] = KEY_F4, [63] = KEY_F5,
+    [64] = KEY_F6, [65] = KEY_F7, [66] = KEY_F8, [67] = KEY_F9, [68] = KEY_F10,
+    [69] = KEY_NUMLOCK, [70] = KEY_SCROLLLOCK,
+    [71] = KEY_KP7, [72] = KEY_KP8, [73] = KEY_KP9, [74] = KEY_KPMINUS,
+    [75] = KEY_KP4, [76] = KEY_KP5, [77] = KEY_KP6, [78] = KEY_KPPLUS,
+    [79] = KEY_KP1, [80] = KEY_KP2, [81] = KEY_KP3, [82] = KEY_KP0, [83] = KEY_KPDOT,
+    [87] = KEY_F11, [88] = KEY_F12,
+};
+
+void keyboard_init(void) {
+    ioq_init(&keyboard_ioq);
+    keyboard_flush_pending();
+
+    evdev_kbd = evdev_create("atkbd", BUS_I8042, 0x1f, 0x0001, "/dev/input/event0");
+    for (int sc = 0; sc < 128; sc++) {
+        if (sc_to_key[sc] != 0) {
+            evdev_enable_key(evdev_kbd, sc_to_key[sc]);
+        }
+    }
+    evdev_enable_key(evdev_kbd, KEY_RIGHTSHIFT);
+}
+
 static const char keymap[2][128] = {
     {0,   0x1b, '1', '2', '3', '4', '5', '6', '7',  '8', '9', '0',  '-',  '=', 0x08, '\t',
      'q', 'w',  'e', 'r', 't', 'y', 'u', 'i', 'o',  'p', '[', ']',  '\n', 0,   'a',  's',
@@ -57,21 +93,15 @@ static const char keymap[2][128] = {
      'Q', 'W',  'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0,   'A',  'S',
      'D', 'F',  'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0,   '|', 'Z',  'X', 'C',  'V',
      'B', 'N',  'M', '<', '>', '?', 0,   '*', 0,   ' ', 0,   0,   0,    0,   0,    0,
-     0,   0,    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,    0,   0,    0,
-     0,   0,    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,    0,   0,    0,
-     0,   0,    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,    0,   0,    0,
-     0,   0,    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,    0,   0,    0}};
+     0,   0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,   0,    0,
+     0,   0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,   0,    0,
+     0,   0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,   0,    0,
+     0,   0,    0,   0,   0,   0,   0,   0,   0,    0,   0,   0,    0,   0,    0}};
 
 static uint8_t shift = 0;
 static uint8_t caps = 0;
 static uint8_t ctrl = 0;
 static uint8_t alt = 0;
-
-static kbd_gui_hook_t gui_hook = 0;
-
-void keyboard_set_gui_hook(kbd_gui_hook_t hook) {
-    gui_hook = hook;
-}
 
 char keyboard_translate(uint8_t scancode, int shifted) {
     if (scancode >= 128)
@@ -80,6 +110,18 @@ char keyboard_translate(uint8_t scancode, int shifted) {
     if (caps && c >= 'a' && c <= 'z')
         c -= 32;
     return c;
+}
+
+static void keyboard_report_evdev(uint8_t sc) {
+    if (evdev_kbd == NULL) {
+        return;
+    }
+    uint16_t code = sc_to_key[sc & 0x7f];
+    if (code == 0) {
+        return;
+    }
+    evdev_report(evdev_kbd, EV_KEY, code, (sc & 0x80) ? 0 : 1);
+    evdev_report(evdev_kbd, EV_SYN, SYN_REPORT, 0);
 }
 
 void keyboard_handler(void) {
@@ -104,17 +146,7 @@ void keyboard_handler(void) {
         alt = 0;
     }
 
-    if (gui_hook) {
-        uint8_t mods = 0;
-        if (shift)
-            mods |= KBD_MOD_SHIFT;
-        if (ctrl)
-            mods |= KBD_MOD_CTRL;
-        if (alt)
-            mods |= KBD_MOD_ALT;
-        gui_hook((uint8_t)(sc & 0x7F), !(sc & 0x80), mods);
-        return;
-    }
+    keyboard_report_evdev(sc);
 
     if (sc == SC_SHIFT_L_DOWN || sc == SC_SHIFT_R_DOWN)
         return;

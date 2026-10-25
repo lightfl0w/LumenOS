@@ -6,6 +6,8 @@
 #include "drivers/char/serial/tty.h"
 #include "drivers/input/keyboard/keyboard.h"
 #include "fs/dir.h"
+#include "fs/chardev.h"
+#include "fs/devfs.h"
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/proc.h"
@@ -575,6 +577,23 @@ int io_fd_events(int fd, int want_read, int want_write) {
         return rv;
     }
     if (io_is_file_fd(fd)) {
+        struct FILE *f = lc_file_from_fd(fd);
+        if (f != NULL && f->fd_flag != PIPE_FLAG && f->fd_flag != PIPE_RD_FLAG) {
+            const struct CHARDEV_OPS *ops = NULL;
+            if (f->devfs_node != 0 && f->devfs_node != (uint32_t)-1) {
+                ops = file_chardev_ops(f);
+            } else if (f->fd_inode != NULL && fs_is_chardev(f->fd_inode)) {
+                ops = file_chardev_ops(f);
+            }
+            if (ops != NULL && ops->poll != NULL) {
+                uint32_t p = ops->poll(f);
+                if (want_read && (p & CHARDEV_POLL_READABLE))
+                    rv |= LINUX_POLLIN;
+                if (want_write && (p & CHARDEV_POLL_WRITABLE))
+                    rv |= LINUX_POLLOUT;
+                return rv;
+            }
+        }
         if (is_pipe(fd)) {
             struct FILE *f = lc_file_from_fd(fd);
             if (f != NULL && f->fd_inode != NULL) {

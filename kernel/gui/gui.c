@@ -136,9 +136,6 @@ int gui_session_run(void) {
     wm_init_state();
     x11_gateway_init();
 
-    keyboard_set_gui_hook(comp_post_key);
-    mouse_set_hook(comp_post_mouse);
-
     comp_log("compositor: session started (32bpp RGBA)");
     x11_server_start();
     clients_spawn_initial();
@@ -148,8 +145,6 @@ int gui_session_run(void) {
     kprintf("gui: session ended\n");
     mtime_sleep(150);
 
-    keyboard_set_gui_hook(0);
-    mouse_set_hook(0);
     io_set_gui_active(0);
     io_clear_screen();
 

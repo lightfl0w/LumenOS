@@ -6,6 +6,8 @@
 #include "drivers/char/serial/tty.h"
 #include "drivers/input/keyboard/keyboard.h"
 #include "fs/dir.h"
+#include "fs/chardev.h"
+#include "fs/devfs.h"
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/proc.h"
@@ -115,6 +117,8 @@ int32_t compat_getdents64(int32_t fd, void *dirp, uint32_t count) {
         return -LINUX_EBADF;
     if (pf->proc_id != 0)
         return proc_getdents64(pf, dirp, count);
+    if (pf->devfs_node != 0)
+        return devfs_getdents64(pf, dirp, count);
     if (pf->fd_inode == NULL)
         return -LINUX_EBADF;
     uint32_t pos = pf->fd_pos;
@@ -176,8 +180,11 @@ int32_t compat_ioctl(int32_t fd, uint32_t cmd, uint64_t arg) {
     }
     if (fd >= 0 && fd < MAX_FILES_OPEN_PER_PROC) {
         struct FILE *pf = lc_file_from_fd(fd);
-        if (pf != NULL && pf->dev_priv != NULL)
-            return pty_chardev_ioctl(pf, cmd, arg);
+        if (pf != NULL) {
+            const struct CHARDEV_OPS *ops = file_chardev_ops(pf);
+            if (ops != NULL && ops->ioctl != NULL)
+                return ops->ioctl(pf, cmd, arg);
+        }
     }
     if (fd >= 0 && compat_fd_is_tty(fd)) {
         switch (cmd) {
@@ -540,8 +547,11 @@ int32_t compat_write(int32_t fd, const void *buf, uint32_t count) {
         return -1;
     if (fd < MAX_FILES_OPEN_PER_PROC) {
         struct FILE *pf = lc_file_from_fd(fd);
-        if (pf != NULL && pf->dev_priv != NULL)
-            return (int32_t)pty_chardev_write(pf, buf, count);
+        if (pf != NULL) {
+            const struct CHARDEV_OPS *ops = file_chardev_ops(pf);
+            if (ops != NULL && ops->write != NULL)
+                return ops->write(pf, buf, (int32_t)count);
+        }
     }
     int xi = evfd_slot(fd);
     if (xi >= 0)
@@ -587,8 +597,11 @@ int32_t compat_write(int32_t fd, const void *buf, uint32_t count) {
 int32_t compat_read(int32_t fd, void *buf, uint32_t count) {
     if (fd >= 0 && fd < MAX_FILES_OPEN_PER_PROC) {
         struct FILE *pf = lc_file_from_fd(fd);
-        if (pf != NULL && pf->dev_priv != NULL)
-            return (int32_t)pty_chardev_read(pf, buf, count);
+        if (pf != NULL) {
+            const struct CHARDEV_OPS *ops = file_chardev_ops(pf);
+            if (ops != NULL && ops->read != NULL)
+                return ops->read(pf, buf, (int32_t)count);
+        }
     }
     int xi = evfd_slot(fd);
     if (xi >= 0)

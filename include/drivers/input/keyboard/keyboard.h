@@ -28,12 +28,9 @@ extern struct TTY_IOQUEUE keyboard_ioq;
 #define KBD_SC_LEFT 0x4B
 #define KBD_SC_RIGHT 0x4D
 
-typedef void (*kbd_gui_hook_t)(uint8_t scancode, int pressed, uint8_t mods);
-
 void keyboard_init(void);
 void keyboard_flush_pending(void);
 void keyboard_handler(void);
-void keyboard_set_gui_hook(kbd_gui_hook_t hook);
 char keyboard_translate(uint8_t scancode, int shift);
 
 #endif

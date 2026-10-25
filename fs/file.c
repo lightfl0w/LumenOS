@@ -1,13 +1,12 @@
 #include "fs/file.h"
-#include "drivers/char/serial/pty.h"
-#include "drivers/char/serial/tty.h"
+#include "fs/chardev.h"
+#include "fs/devfs.h"
 #include "fs/fs.h"
 #include "fs/inode.h"
 #include "fs/vfs/vfs.h"
 #include "arch/asm_func.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
-#include "lib/rand/rand.h"
 #include "lib/string/str.h"
 struct FILE file_table[MAX_FILE_OPEN];
 static volatile uint32_t file_slot_used[MAX_FILE_OPEN / 32];
@@ -142,33 +141,24 @@ uint32_t fd_local2global(uint32_t local_fd) {
     return fd_owner_task()->fd_table[local_fd];
 }
 static uint32_t chardev_read(struct FILE *file, void *buf, uint32_t count) {
-    if (file->dev_priv) {
-        int32_t r = pty_chardev_read(file, buf, count);
-        return r < 0 ? 0 : (uint32_t)r;
+    const struct CHARDEV_OPS *ops = file_chardev_ops(file);
+    if (ops == NULL || ops->read == NULL) {
+        return 0;
     }
-    uint32_t dev = file->fd_inode->i_block[0];
-    if (dev >> 8 == 5u)
-        return (uint32_t)TTY.read((char *)buf, count);
-    if (dev == 0x0105u) {
-        memset(buf, 0, count);
-        return count;
-    }
-    if (dev == 0x0108u || dev == 0x0109u || dev == 0x0101u) {
-        rand_bytes(buf, count);
-        return count;
-    }
-    return 0;
+    int32_t r = ops->read(file, buf, (int32_t)count);
+    return r < 0 ? 0 : (uint32_t)r;
 }
 static uint32_t chardev_write(struct FILE *file, const void *buf, uint32_t count) {
-    if (file->dev_priv) {
-        int32_t r = pty_chardev_write(file, buf, count);
-        return r < 0 ? 0 : (uint32_t)r;
+    const struct CHARDEV_OPS *ops = file_chardev_ops(file);
+    if (ops == NULL || ops->write == NULL) {
+        return count;
     }
-    if (file->fd_inode->i_block[0] >> 8 == 5u)
-        return (uint32_t)TTY.write((const char *)buf, count);
-    return count;
+    int32_t r = ops->write(file, buf, (int32_t)count);
+    return r < 0 ? 0 : (uint32_t)r;
 }
 uint32_t file_read(struct FILE *file, void *buf, uint32_t count) {
+    if (file->devfs_node != 0)
+        return devfs_read(file, buf, count);
     if (fs_is_chardev(file->fd_inode))
         return chardev_read(file, buf, count);
     int r = fs_read_from_inode(file->fd_inode, file->fd_pos, buf, count);
@@ -176,6 +166,8 @@ uint32_t file_read(struct FILE *file, void *buf, uint32_t count) {
     return (uint32_t)r;
 }
 uint32_t file_write(struct FILE *file, const void *buf, uint32_t count) {
+    if (file->devfs_node != 0)
+        return devfs_write(file, buf, count);
     if (fs_is_chardev(file->fd_inode))
         return chardev_write(file, buf, count);
     int r = fs_write_to_inode(file->fd_inode, file->fd_pos, buf, count);

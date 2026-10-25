@@ -5,7 +5,6 @@
 #include "drivers/video/framebuffer/display.h"
 #include "drivers/video/framebuffer/gpu.h"
 #include "kernel/gui/font.h"
-#include "kernel/gui/input.h"
 #include "kernel/gui/shm.h"
 #include "kernel/gui/wm.h"
 #include "kernel/gui/x11.h"
@@ -174,15 +173,6 @@ void wl_surface_set_alpha(struct WL_SURFACE *s, int alpha) {
     s->alpha = (uint8_t)alpha;
     lock_release(&comp_lock);
     comp_damage_surface(s);
-}
-
-void comp_post_key(uint8_t scancode, int pressed, uint8_t mods) {
-    input_post(INPUT_DEV_KEYBOARD, scancode, (int32_t)pressed | ((int32_t)mods << 8));
-}
-
-void comp_post_mouse(int dx, int dy, uint8_t buttons) {
-    input_post(INPUT_DEV_POINTER, (uint32_t)buttons,
-               (int32_t)(dx & 0xFFFF) | ((int32_t)(dy & 0xFFFF) << 16));
 }
 
 struct WL_CLIENT *wl_display_connect(const char *name) {
@@ -1105,7 +1095,6 @@ void comp_init(void) {
     dst = d->surface(DISP_BACK);
     gpu_set_target(dst);
 
-    input_init();
     wallpaper_init();
     lock_init(&comp_lock);
     shm_init();
@@ -1121,72 +1110,7 @@ void comp_init(void) {
 }
 
 static void drain_input(void) {
-    struct GUI_INPUT_EVENT ev;
-    int cur_dirty = 0;
-    int motion_pending = 0;
-    lock_acquire(&comp_lock);
-    while (input_get(&ev)) {
-        if (ev.dev == INPUT_DEV_KEYBOARD) {
-            perf_key_events++;
-            wm_handle_key((uint8_t)ev.code, (int)(ev.value & 0xFF), (uint8_t)(ev.value >> 8));
-        } else if (ev.dev == INPUT_DEV_POINTER) {
-            perf_mouse_events++;
-            int dx = (int16_t)(ev.value & 0xFFFF);
-            int dy = (int16_t)((uint32_t)ev.value >> 16);
-            int nx = cur_x + dx;
-            int ny = cur_y + dy;
-            if (nx < 0)
-                nx = 0;
-            if (nx >= scrnx)
-                nx = scrnx - 1;
-            if (ny < 0)
-                ny = 0;
-            if (ny >= scrny)
-                ny = scrny - 1;
-            if (nx != cur_x || ny != cur_y) {
-                if (!hw_cursor) {
-                    comp_damage_rect(cur_x, cur_y, CURSOR_W, CURSOR_H);
-                    comp_damage_rect(nx, ny, CURSOR_W, CURSOR_H);
-                }
-                cur_x = nx;
-                cur_y = ny;
-                motion_pending = 1;
-                cur_dirty = 1;
-            }
-            uint8_t btn = (uint8_t)ev.code;
-            uint8_t edge = btn ^ last_buttons;
-            if (edge) {
-                if (motion_pending) {
-                    motion_pending = 0;
-                    wm_handle_motion(cur_x, cur_y);
-                    wm_handle_hover(cur_x, cur_y);
-                    struct WL_SURFACE *mh = wm_surface_at(cur_x, cur_y);
-                    if (mh && mh->x11_owner)
-                        x11_notify_motion(mh, cur_x - mh->x, cur_y - mh->y);
-                }
-                wm_handle_button(cur_x, cur_y, btn, edge);
-                struct WL_SURFACE *hit = wm_surface_at(cur_x, cur_y);
-                if (hit && hit->x11_owner) {
-                    int b = (edge & 1) ? 1 : 3;
-                    x11_notify_button(hit, cur_x - hit->x, cur_y - hit->y, b, (btn & 1) ? 1 : 0);
-                }
-                last_buttons = btn;
-            }
-        }
-    }
-    if (motion_pending) {
-        wm_handle_motion(cur_x, cur_y);
-        wm_handle_hover(cur_x, cur_y);
-        struct WL_SURFACE *mh = wm_surface_at(cur_x, cur_y);
-        if (mh && mh->x11_owner)
-            x11_notify_motion(mh, cur_x - mh->x, cur_y - mh->y);
-    }
-    if (hw_cursor && cur_dirty) {
-        struct GUI_DISPLAY_OPS *d = display_get();
-        if (d && d->cursor_move)
-            d->cursor_move(cur_x, cur_y);
-    }
-    lock_release(&comp_lock);
+    (void)0;
 }
 
 static void frame_clock(void) {

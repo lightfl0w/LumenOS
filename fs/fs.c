@@ -4,6 +4,8 @@
 #include "drivers/char/serial/pty.h"
 #include "drivers/char/serial/tty.h"
 #include "fs/dir.h"
+#include "fs/chardev.h"
+#include "fs/devfs.h"
 #include "fs/file.h"
 #include "fs/inode.h"
 #include "fs/proc.h"
@@ -405,6 +407,9 @@ int open_file_mode(const char *pathname, uint8_t flags, uint32_t mode) {
     if (proc_match(pathname)) {
         return proc_open(pathname, flags);
     }
+    if (devfs_match(pathname)) {
+        return devfs_open(pathname, flags);
+    }
     uint32_t ino = 0;
     int is_dir = 0;
     if (fs_lookup(pathname, &ino, &is_dir)) {
@@ -447,9 +452,11 @@ int open_file_mode(const char *pathname, uint8_t flags, uint32_t mode) {
     file->ref_cnt = 1;
     if (fs_is_chardev(file->fd_inode)) {
         uint32_t dev = fs_chardev_dev(file->fd_inode);
-        uint32_t major = dev >> 8;
-        if (major == PTY_MASTER_MAJOR || major == PTY_SLAVE_MAJOR) {
-            if (pty_chardev_open(file, dev) < 0) {
+        file->dev_major = (uint16_t)(dev >> 8);
+        file->dev_minor = (uint16_t)(dev & 0xffu);
+        const struct CHARDEV_OPS *ops = chardev_lookup(file->dev_major);
+        if (ops != NULL && ops->open != NULL) {
+            if (ops->open(file, dev) < 0) {
                 inode_close(file->fd_inode);
                 file_table_free_slot(gfd);
                 current->errno = 16;
@@ -508,8 +515,14 @@ int close_file(int fd) {
     if (file_table_unref(global_fd_idx) > 0)
         return 0;
 
-    if (file->dev_priv)
-        pty_chardev_close(file);
+    if (file->devfs_node != 0) {
+        devfs_close(file);
+    } else if (file->dev_priv) {
+        const struct CHARDEV_OPS *ops = file_chardev_ops(file);
+        if (ops != NULL && ops->release != NULL) {
+            ops->release(file);
+        }
+    }
 
     if (file->fd_flag == PIPE_FLAG || file->fd_flag == PIPE_RD_FLAG) {
         struct TTY_IOQUEUE *ioq = (struct TTY_IOQUEUE *)file->fd_inode;
@@ -571,6 +584,9 @@ int32_t sys_lseek(int32_t fd, int32_t offset, uint8_t whence) {
     struct FILE *pf = file_get(global_fd_idx);
     if (pf->proc_id != 0) {
         return proc_lseek(pf, offset, whence);
+    }
+    if (pf->devfs_node != 0) {
+        return devfs_lseek(pf, offset, whence);
     }
     int32_t new_pos = 0;
     int32_t file_size = (int32_t)pf->fd_inode->i_size;
@@ -1030,6 +1046,9 @@ int32_t sys_stat(const char *path, struct FS_STAT *buf) {
     }
     if (proc_match(path)) {
         return proc_stat(path, buf);
+    }
+    if (devfs_match(path)) {
+        return devfs_stat(path, buf);
     }
     if (!strcmp(path, ".") || !strcmp(path, "/.") || !strcmp(path, "/..")) {
         buf->st_filetype = FT_DIRECTORY;

@@ -14,6 +14,9 @@ struct FILE {
     uint32_t ref_cnt;
     uint32_t fd_nonblock;
     void *dev_priv;
+    uint32_t devfs_node;
+    uint16_t dev_major;
+    uint16_t dev_minor;
 };
 extern struct FILE file_table[MAX_FILE_OPEN];
 void file_table_init(void);
