@@ -120,7 +120,7 @@ int devfs_add_char(const char *path, uint32_t major, uint32_t minor) {
 
 int devfs_open(const char *path, uint8_t flags) {
     struct DEVFS_NODE *node = devfs_find_exact(path);
-    int is_dir = node == NULL && devfs_is_dir_path(path);
+    int is_dir = (node != NULL && node->is_dir) || (node == NULL && devfs_is_dir_path(path));
     if (node == NULL && !is_dir) {
         current->errno = 2;
         return -1;
@@ -135,7 +135,10 @@ int devfs_open(const char *path, uint8_t flags) {
     file->fd_pos = 0;
     file->ref_cnt = 1;
     file->fd_inode = NULL;
-    if (is_dir) {
+    if (node != NULL && node->is_dir) {
+        file->fd_flag = PROC_DIRF_FLAG;
+        file->devfs_node = (uint32_t)(node - devfs_nodes) + 1;
+    } else if (is_dir) {
         file->fd_flag = PROC_DIRF_FLAG;
         file->devfs_node = (uint32_t)-1;
     } else {
@@ -213,7 +216,7 @@ static void devfs_fill_stat(struct FS_STAT *buf, int is_dir, uint32_t ino) {
 int devfs_stat(const char *path, struct FS_STAT *buf) {
     struct DEVFS_NODE *node = devfs_find_exact(path);
     if (node != NULL) {
-        devfs_fill_stat(buf, 0, (uint32_t)(node - devfs_nodes) + 1);
+        devfs_fill_stat(buf, node->is_dir, (uint32_t)(node - devfs_nodes) + 1);
         return 0;
     }
     if (devfs_is_dir_path(path)) {

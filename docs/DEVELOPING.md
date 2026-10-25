@@ -95,7 +95,41 @@ IP_PROTO_REGISTER(253,   myl4_input,    "myl4");      // IP 传输层
 
 输入函数签名：`void (*)(NETIF *ifp, ..., const uint8_t *payload, uint32_t len)`。
 
-### 4.5 加系统调用
+### 4.5 加输入设备（evdev）
+
+事件核心在 `kernel/input/evdev.c`，用户态接口为 Linux 兼容的 `/dev/input/eventN`（chardev major 13）。驱动在 init 时创建设备并上报事件：
+
+```c
+struct evdev_dev *dev = evdev_create("mydev", BUS_USB, vid, pid, "/dev/input/event2");
+evdev_enable_key(dev, KEY_A);
+IRQ_REGISTER(IRQ_MYDEV, my_irq, "mydev");
+```
+
+中断里上报：`evdev_report(dev, EV_KEY, KEY_A, 1); evdev_report(dev, EV_SYN, SYN_REPORT, 0);`
+
+ioctl（`EVIOCGNAME/EVIOCGID/EVIOCGBIT/EVIOCGKEY/EVIOCGRAB`）与 `struct input_event` 布局与 Linux 一致，musl 程序可直接使用。阻塞读、poll/select 均已接通。
+
+### 4.6 加字符设备
+
+实现 `struct CHARDEV_OPS`（`include/fs/chardev.h`：open/release/read/write/ioctl/poll），按 major 注册：
+
+```c
+chardev_register(42, &my_ops);
+```
+
+节点放 `/dev/input` 或 `/dev/dri` 下时用 `devfs_add_char("/dev/input/foo0", 42, 0)`（`fs/devfs.c` 只认领这两个前缀，其余路径仍走 ext2 上的 mknod 节点）。`compat_ioctl`、`compat_read/write` 和 poll/select 会自动按 major 分发到 ops。
+
+### 4.7 加显示后端（DRM/KMS）
+
+`/dev/dri/card0`（chardev major 226）由 `kernel/drm/drm.c` 提供，实现与 linux/drm_mode.h 二进制一致的 ioctl（GETRESOURCES/GETCONNECTOR/SETCRTC/PAGE_FLIP/CREATE_DUMB/MAP_DUMB/ATOMIC 等）。
+
+DRM 之下是 UDI 后端链（`drivers/video/framebuffer/`：virtio-gpu → VMware SVGA → 软件回退），后端只需实现 `struct GUI_UDI_OPS`（probe/init/alloc_buffer/commit）。dumb buffer 统一分配在系统内存，扫描输出时内核 blit 到后端缓冲，因此新 GPU 后端无需关心 KMS 协议。
+
+dumb buffer 的用户态 mmap 是真映射：`sys_mmap` 检测 DRM fd 后由 `drm_fd_mmap` 用 `arch_pte_create` 把 gem 物理页直接写进用户页表。MAP_DUMB 返回 `handle << 20` 的伪偏移。
+
+PCI 设备驱动可用总线层（`drivers/bus/pci/pci.c`）的 `pci_register_driver(match, probe)`，枚举含桥递归与 64 位 BAR 解析；`pci_read_bar` 返回地址/大小/类型。
+
+### 4.8 加系统调用
 
 在 `kernel/syscall/syscall.c` 写 `nsys_xxx(struct ARCH_REGS *r)`，挂进同文件的 `nsys_table[]`：
 

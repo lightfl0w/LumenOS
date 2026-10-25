@@ -22,10 +22,22 @@
 #define PCI_BDF_DEV(bdf) ((uint8_t)(((bdf) >> 11) & 0x1Fu))
 #define PCI_BDF_FUNC(bdf) ((uint8_t)(((bdf) >> 8) & 0x7u))
 
+struct PCI_BAR {
+    uint64_t addr;
+    uint64_t size;
+    uint8_t is_io;
+    uint8_t is_64;
+};
+
 uint32_t pci_config_read32(uint32_t bdf, uint8_t reg);
 void pci_config_write32(uint32_t bdf, uint8_t reg, uint32_t val);
 uint16_t pci_config_read16(uint32_t bdf, uint8_t reg);
 int pci_find_class(uint8_t base_class, uint8_t subclass, uint32_t *bdf);
 void pci_cmd_set(uint32_t bdf, uint32_t bits);
+int pci_read_bar(uint32_t bdf, uint8_t index, struct PCI_BAR *out);
+int pci_register_driver(const char *name,
+                        int (*match)(uint32_t bdf, uint16_t vendor, uint16_t device,
+                                     uint8_t base_class, uint8_t subclass),
+                        int (*probe)(uint32_t bdf));
 
 #endif

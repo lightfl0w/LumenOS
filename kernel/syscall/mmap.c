@@ -1,4 +1,5 @@
 #include "kernel/syscall/mmap.h"
+#include "kernel/drm/drm.h"
 #include "arch/mmu.h"
 #include "drivers/char/serial/console/io.h"
 #include "fs/fs.h"
@@ -89,6 +90,9 @@ uint32_t sys_mmap(const struct SYS_MMAP_ARGS *a) {
     }
     if (base == 0)
         return -LINUX_ENOMEM;
+    if (!(a->flags & MAP_ANONYMOUS) && (int32_t)a->fd >= 0 &&
+        drm_fd_mmap((int32_t)a->fd, base, pages, a->prot, a->offset) == 0)
+        return base;
     if (map_run(base, pages, PROT_READ | PROT_WRITE) == 0) {
         unmap_pages(base, pages);
         vaddr_unreserve(base, pages);

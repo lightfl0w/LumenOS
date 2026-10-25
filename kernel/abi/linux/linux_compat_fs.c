@@ -28,6 +28,7 @@
 #include "kernel/userprog/process.h"
 #include "kernel/userprog/wait_exit.h"
 #include "lib/rand/rand.h"
+#include "lib/printf/printf.h"
 #include "lib/string/str.h"
 #include "mm/access.h"
 #include "net/socket.h"
@@ -478,6 +479,14 @@ int32_t compat_stat_linux(const char *path, uint64_t ub, int follow) {
     uint32_t ino = 0, size = 0, mode = 0, uid = 0, gid = 0;
     if (proc_match(path)) {
         compat_stat_fill(&ls, 2, 0, LINUX_S_IFREG | 0444u, 0, 0);
+    } else if (devfs_match(path)) {
+        struct FS_STAT ds;
+        if (devfs_stat(path, &ds) != 0)
+            return -LINUX_ENOENT;
+        uint32_t type = ds.st_filetype == FT_DIRECTORY
+                            ? (LINUX_S_IFDIR | 0755u)
+                            : (LINUX_S_IFCHR | 0666u);
+        compat_stat_fill(&ls, ds.st_ino, 0, type, 0, 0);
     } else if (fs_stat_full(path, &ino, &size, &mode, &uid, &gid, follow) != 0) {
         return -LINUX_ENOENT;
     } else {

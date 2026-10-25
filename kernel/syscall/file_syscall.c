@@ -2,6 +2,7 @@
 #include "drivers/block/ata/ide.h"
 #include "fs/dir.h"
 #include "fs/devfs.h"
+#include "uapi/linux_abi.h"
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/inode.h"
@@ -160,6 +161,25 @@ int32_t sys_getdents(int32_t fd, void *dirp, uint32_t count) {
     struct FILE *pf = fd_lookup(fd);
     if (pf == NULL || pf->fd_inode == NULL) {
         return -1;
+    }
+    if (pf->devfs_node != 0) {
+        struct LINUX_DIRENT64 d64[4];
+        int32_t n = devfs_getdents64(pf, d64, sizeof(d64));
+        if (n <= 0) {
+            return n;
+        }
+        uint32_t written = 0;
+        uint8_t *src = (uint8_t *)d64;
+        while (written < (uint32_t)n) {
+            struct LINUX_DIRENT64 *e = (struct LINUX_DIRENT64 *)(src + written);
+            struct LINUX_DIRENT *ld = (struct LINUX_DIRENT *)dirp + written;
+            ld->d_ino = e->d_ino;
+            ld->d_off = e->d_off;
+            ld->d_reclen = (uint16_t)(10 + strlen(e->d_name) + 1);
+            memcpy(ld->d_name, e->d_name, strlen(e->d_name) + 1);
+            written += e->d_reclen;
+        }
+        return (int32_t)written;
     }
     uint32_t pos = 0;
     struct FS_DIRENT de;
