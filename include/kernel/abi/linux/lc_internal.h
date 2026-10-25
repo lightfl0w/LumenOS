@@ -219,6 +219,7 @@ int64_t lc_linkat(LC_ARGS);
 int64_t lc_sysinfo(LC_ARGS);
 int64_t lc_tgkill(LC_ARGS);
 int64_t lc_timerfd_create(LC_ARGS);
+int64_t lc_memfd_create(LC_ARGS);
 int64_t lc_timerfd_gettime(LC_ARGS);
 int64_t lc_timerfd_read(int i, void *buf, uint32_t count);
 int64_t lc_timerfd_settime(LC_ARGS);

@@ -6,6 +6,7 @@
 #include "fs/dir.h"
 #include "fs/chardev.h"
 #include "fs/devfs.h"
+#include "kernel/ipc/shmem.h"
 #include "fs/file.h"
 #include "fs/inode.h"
 #include "fs/proc.h"
@@ -515,7 +516,9 @@ int close_file(int fd) {
     if (file_table_unref(global_fd_idx) > 0)
         return 0;
 
-    if (file->devfs_node != 0) {
+    if (file->fd_flag == MEMFD_FLAG) {
+        shmem_close(file);
+    } else if (file->devfs_node != 0) {
         devfs_close(file);
     } else if (file->dev_priv) {
         const struct CHARDEV_OPS *ops = file_chardev_ops(file);

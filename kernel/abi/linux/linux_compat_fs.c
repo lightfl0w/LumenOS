@@ -11,6 +11,7 @@
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/proc.h"
+#include "kernel/ipc/shmem.h"
 #include "kernel/ipc/unix_sock.h"
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
@@ -433,7 +434,11 @@ int32_t compat_ftruncate(int32_t fd, int32_t length) {
         return -LINUX_EINVAL;
     uint32_t gfd = fd_local2global((uint32_t)fd);
     struct FILE *pf = file_get(gfd);
-    if (pf == NULL || pf->fd_inode == NULL || is_pipe((uint32_t)fd))
+    if (pf == NULL || is_pipe((uint32_t)fd))
+        return -LINUX_EINVAL;
+    if (pf->fd_flag == MEMFD_FLAG)
+        return shmem_truncate_fd(fd, (uint32_t)length) == 0 ? 0 : -LINUX_EINVAL;
+    if (pf->fd_inode == NULL)
         return -LINUX_EINVAL;
     if ((pf->fd_inode->i_mode & 0xF000u) != 0x8000u)
         return -LINUX_EINVAL;
@@ -499,6 +504,20 @@ int32_t compat_stat_linux(const char *path, uint64_t ub, int follow) {
 }
 int32_t compat_fstat_linux(int32_t fd, uint64_t ub) {
     struct LINUX_STAT ls;
+
+    if (fd >= 0 && fd < (int32_t)MAX_FILES_OPEN_PER_PROC) {
+        uint32_t gfd = fd_local2global((uint32_t)fd);
+        struct FILE *pf = gfd != (uint32_t)-1 ? file_get(gfd) : NULL;
+        if (pf != NULL && pf->fd_flag == MEMFD_FLAG) {
+            struct FS_STAT ms;
+            if (shmem_fstat(pf, &ms) != 0)
+                return -LINUX_EBADF;
+            compat_stat_fill(&ls, 1, (int64_t)ms.st_size, LINUX_S_IFREG | 0600u, 0, 0);
+            memcpy((void *)(uintptr_t)ub, &ls, sizeof(ls));
+            return 0;
+        }
+    }
+
     if (fd >= 0 && fd < 3) {
         compat_stat_fill(&ls, 0, 0, LINUX_S_IFCHR | 0600u, 0, 0);
     } else if (compat_fd_isdir(fd)) {
@@ -844,6 +863,11 @@ int64_t lc_lstat(LC_ARGS) {
 int64_t lc_lseek(LC_ARGS) {
     return sys_lseek((int32_t)a, (int32_t)b, (uint8_t)(c + 1u));
 }
+int64_t lc_memfd_create(LC_ARGS) {
+    int fd = memfd_create_fd();
+    return fd < 0 ? -LINUX_EMFILE : fd;
+}
+
 int64_t lc_fcntl(LC_ARGS) {
     int uslot = unix_fd_slot((uint64_t)a);
     if (uslot >= 0) {

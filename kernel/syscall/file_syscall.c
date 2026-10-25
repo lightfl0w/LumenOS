@@ -2,6 +2,7 @@
 #include "drivers/block/ata/ide.h"
 #include "fs/dir.h"
 #include "fs/devfs.h"
+#include "kernel/ipc/shmem.h"
 #include "uapi/linux_abi.h"
 #include "fs/file.h"
 #include "fs/fs.h"
@@ -42,13 +43,17 @@ int32_t sys_fstat(int32_t fd, void *buf) {
     }
     struct FILE *pf = fd_lookup(fd);
     if (pf == NULL ||
-        (pf->fd_inode == NULL && pf->proc_id == 0 && pf->devfs_node == 0)) {
+        (pf->fd_inode == NULL && pf->proc_id == 0 && pf->devfs_node == 0 &&
+         pf->fd_flag != MEMFD_FLAG)) {
         return -1;
     }
     struct FS_STAT *st = (struct FS_STAT *)buf;
     memset(st, 0, sizeof(*st));
     if (pf->proc_id != 0) {
         return proc_fstat(pf, st);
+    }
+    if (pf->fd_flag == MEMFD_FLAG) {
+        return shmem_fstat(pf, st);
     }
     if (pf->devfs_node != 0) {
         return devfs_fstat(pf, st);
