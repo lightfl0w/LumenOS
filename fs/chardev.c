@@ -1,5 +1,6 @@
 #include "fs/chardev.h"
 #include "fs/file.h"
+#include "kernel/ipc/pipe.h"
 #include "fs/fs.h"
 #include "drivers/char/serial/pty.h"
 #include "drivers/char/serial/tty.h"
@@ -46,6 +47,10 @@ uint32_t file_chardev_dev(const struct FILE *file) {
 }
 
 const struct CHARDEV_OPS *file_chardev_ops(const struct FILE *file) {
+    if (file->fd_flag == PIPE_FLAG || file->fd_flag == PIPE_RD_FLAG ||
+        file->fd_flag == 0xFFFEu) {
+        return NULL;
+    }
     uint32_t dev = file_chardev_dev(file);
     if (dev == 0) {
         return NULL;

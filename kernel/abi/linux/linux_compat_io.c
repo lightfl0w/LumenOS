@@ -33,111 +33,17 @@
 #include "net/socket.h"
 #include "user/libc/syscall.h"
 
-#define UNIX_FD_BASE 0x400
-#define MAX_UNIX_SOCK 16
-#define UNIX_BUF_SIZE 2048
+#include "kernel/ipc/unix_sock.h"
 
-static struct {
-    uint8_t active;
-    uint8_t connected;
-    uint8_t type;
-    uint8_t nonblock;
-    int8_t peer;
-    int8_t self;
-    uint16_t head;
-    uint16_t tail;
-    uint16_t count;
-    uint8_t buf[UNIX_BUF_SIZE];
-} u_unix[MAX_UNIX_SOCK];
+#define UNIX_MAX_IOV 16384
 
-void unix_close_slot(int idx) {
-    if (idx < 0 || idx >= MAX_UNIX_SOCK)
-        return;
-    u_unix[idx].active = 0;
-    u_unix[idx].count = 0;
-    u_unix[idx].head = 0;
-    u_unix[idx].tail = 0;
-}
-
-int unix_fd_slot(uint64_t fd) {
-    uint64_t idx = fd - UNIX_FD_BASE;
-    if (idx >= MAX_UNIX_SOCK || !u_unix[idx].active)
-        return -1;
-    return (int)idx;
-}
-int unix_alloc_slot(void) {
-    for (int i = 0; i < MAX_UNIX_SOCK; i++) {
-        if (!u_unix[i].active)
-            return i;
-    }
-    return -1;
-}
-uint32_t unix_buf_write(int idx, const uint8_t *src, uint32_t len) {
-    uint32_t done = 0;
-    while (done < len && u_unix[idx].count < UNIX_BUF_SIZE) {
-        u_unix[idx].buf[u_unix[idx].tail] = src[done];
-        u_unix[idx].tail = (uint16_t)((u_unix[idx].tail + 1) % UNIX_BUF_SIZE);
-        u_unix[idx].count++;
-        done++;
-    }
-    return done;
-}
-uint32_t unix_buf_read(int idx, uint8_t *dst, uint32_t len) {
-    uint32_t done = 0;
-    while (done < len && u_unix[idx].count > 0) {
-        dst[done] = u_unix[idx].buf[u_unix[idx].head];
-        u_unix[idx].head = (uint16_t)((u_unix[idx].head + 1) % UNIX_BUF_SIZE);
-        u_unix[idx].count--;
-        done++;
-    }
-    return done;
-}
-int unix_peer_alive(int idx) {
-    int8_t p = u_unix[idx].peer;
-    return p >= 0 && u_unix[p].active;
-}
-int32_t unix_send(int idx, const void *buf, uint32_t len) {
-    if (!u_unix[idx].connected || u_unix[idx].peer < 0)
-        return -LINUX_ENOTCONN;
-    int p = u_unix[idx].peer;
-    if (!u_unix[p].active)
-        return -LINUX_EPIPE;
-    for (;;) {
-        uint32_t n = unix_buf_write(p, (const uint8_t *)buf, len);
-        if (n > 0 || len == 0)
-            return (int32_t)n;
-        if (u_unix[idx].nonblock)
-            return -LINUX_EAGAIN;
-        mtime_sleep(1);
-    }
-}
-int32_t unix_recv(int idx, void *buf, uint32_t len) {
-    if (u_unix[idx].count == 0) {
-        if (len == 0)
-            return 0;
-        while (u_unix[idx].count == 0) {
-            if (!unix_peer_alive(idx))
-                return 0;
-            if (u_unix[idx].nonblock)
-                return -LINUX_EAGAIN;
-            mtime_sleep(1);
-        }
-    }
-    return (int32_t)unix_buf_read(idx, (uint8_t *)buf, len);
-}
 int64_t lc_socket(LC_ARGS) {
     int domain = (int)a;
     int type = (int)b;
     if (domain == 1) {
-        int i = unix_alloc_slot();
+        int i = unix_socket_create(type);
         if (i < 0)
             return -LINUX_ENFILE;
-        memset(&u_unix[i], 0, sizeof(u_unix[i]));
-        u_unix[i].active = 1;
-        u_unix[i].connected = 0;
-        u_unix[i].type = (uint8_t)type;
-        u_unix[i].peer = -1;
-        u_unix[i].self = (int8_t)i;
         return UNIX_FD_BASE + i;
     }
     if (domain != 2)
@@ -191,9 +97,56 @@ int fill_sockaddr_in(struct ARCH_REGS *r, uint64_t addr, uint64_t addrlen_ptr, u
         return -1;
     return 0;
 }
+static int unix_addr_path(struct ARCH_REGS *r, uint64_t addr, uint64_t addrlen, char *out,
+                          uint32_t cap) {
+    if (addr == 0 || addrlen < 3)
+        return -1;
+    uint16_t family;
+    if (copy_from_user(&family, (const void *)(uintptr_t)addr, 2) != 0)
+        return -1;
+    if (family != 1)
+        return -1;
+    uint32_t maxlen = (uint32_t)(addrlen - 2);
+    if (maxlen > cap - 1)
+        maxlen = cap - 1;
+    if (copy_from_user(out, (const void *)(uintptr_t)(addr + 2), maxlen) != 0)
+        return -1;
+    out[maxlen] = 0;
+    uint32_t n = (uint32_t)strlen(out);
+    if (n == 0 || n >= cap)
+        return -1;
+    return 0;
+}
+
+static int32_t unix_gather_iov(struct ARCH_REGS *r, uint64_t iov, uint64_t iovlen, uint8_t *dst,
+                               uint32_t cap, uint32_t *out_len) {
+    uint32_t total = 0;
+    for (uint64_t i = 0; i < iovlen && total < cap; i++) {
+        uint64_t ent = iov + i * sizeof(struct LINUX_IOVEC);
+        if (!user_ptr_ok(r, ent, sizeof(struct LINUX_IOVEC), 0))
+            return -LINUX_EFAULT;
+        struct LINUX_IOVEC iv;
+        memcpy(&iv, (const void *)(uintptr_t)ent, sizeof iv);
+        uint32_t n = iv.iov_len > (uint64_t)(cap - total) ? cap - total : (uint32_t)iv.iov_len;
+        if (n == 0)
+            continue;
+        if (!user_ptr_ok(r, (uint64_t)iv.iov_base, n, 0))
+            return -LINUX_EFAULT;
+        memcpy(dst + total, (const void *)(uintptr_t)iv.iov_base, n);
+        total += n;
+    }
+    *out_len = total;
+    return 0;
+}
+
 int64_t lc_connect(LC_ARGS) {
-    if (unix_fd_slot(a) >= 0)
-        return -LINUX_ENOENT;
+    int uslot = unix_fd_slot(a);
+    if (uslot >= 0) {
+        char path[96];
+        if (unix_addr_path(r, b, c, path, sizeof(path)) != 0)
+            return -LINUX_EFAULT;
+        return unix_connect(uslot, path) == 0 ? 0 : -LINUX_ENOENT;
+    }
     uint32_t ip;
     uint16_t port;
     if (sockaddr_in_parts(r, b, c, &ip, &port) != 0)
@@ -201,8 +154,13 @@ int64_t lc_connect(LC_ARGS) {
     return net_connect((int)a, ip, port);
 }
 int64_t lc_bind(LC_ARGS) {
-    if (unix_fd_slot(a) >= 0)
-        return 0;
+    int uslot = unix_fd_slot(a);
+    if (uslot >= 0) {
+        char path[96];
+        if (unix_addr_path(r, b, c, path, sizeof(path)) != 0)
+            return -LINUX_EFAULT;
+        return unix_bind(uslot, path) == 0 ? 0 : -LINUX_EINVAL;
+    }
     uint32_t ip;
     uint16_t port;
     if (sockaddr_in_parts(r, b, c, &ip, &port) != 0)
@@ -210,13 +168,19 @@ int64_t lc_bind(LC_ARGS) {
     return net_bind((int)a, ip, port);
 }
 int64_t lc_listen(LC_ARGS) {
-    if (unix_fd_slot(a) >= 0)
-        return 0;
+    int uslot = unix_fd_slot(a);
+    if (uslot >= 0)
+        return unix_listen(uslot) == 0 ? 0 : -LINUX_EINVAL;
     return net_listen((int)a, (int)b);
 }
 int64_t lc_accept(LC_ARGS) {
-    if (unix_fd_slot(a) >= 0)
-        return -LINUX_EAGAIN;
+    int uslot = unix_fd_slot(a);
+    if (uslot >= 0) {
+        int n = unix_accept(uslot);
+        if (n < 0)
+            return -LINUX_EAGAIN;
+        return UNIX_FD_BASE + n;
+    }
     return net_accept((int)a);
 }
 int64_t lc_accept4(LC_ARGS) {
@@ -323,9 +287,62 @@ int64_t lc_getsockopt(LC_ARGS) {
         return -LINUX_EFAULT;
     return 0;
 }
+static int unix_cmsg_fds(struct ARCH_REGS *r, uint64_t ctrl, uint64_t ctrllen, int *gfds,
+                         int max) {
+    int n = 0;
+    uint64_t off = 0;
+    while (off + 16 <= ctrllen && n < max) {
+        uint64_t caddr = ctrl + off;
+        if (!user_ptr_ok(r, caddr, 16, 0))
+            break;
+        uint64_t len;
+        int32_t level, type;
+        memcpy(&len, (const void *)(uintptr_t)caddr, 8);
+        memcpy(&level, (const void *)(uintptr_t)(caddr + 8), 4);
+        memcpy(&type, (const void *)(uintptr_t)(caddr + 12), 4);
+        if (len < 16 || off + len > ctrllen)
+            break;
+        if (level == 1 && type == 1) {
+            uint32_t payload = (uint32_t)(len - 16);
+            for (uint32_t k = 0; k + 4 <= payload && n < max; k += 4) {
+                int32_t ufd;
+                memcpy(&ufd, (const void *)(uintptr_t)(caddr + 16 + k), 4);
+                uint32_t gfd = fd_local2global((uint32_t)ufd);
+                if (gfd == (uint32_t)-1)
+                    return -LINUX_EBADF;
+                file_table_ref(gfd);
+                gfds[n++] = (int)gfd;
+            }
+        }
+        off += (len + 7) & ~(uint64_t)7;
+    }
+    return n;
+}
+
 int64_t lc_sendmsg(LC_ARGS) {
-    if (unix_fd_slot(a) >= 0)
-        return -LINUX_ENOTCONN;
+    int uslot = unix_fd_slot(a);
+    if (uslot >= 0) {
+        if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 0))
+            return -LINUX_EFAULT;
+        struct LINUX_MSGHDR mh;
+        memcpy(&mh, (const void *)(uintptr_t)b, sizeof mh);
+        uint8_t sbuf[UNIX_MAX_IOV];
+        uint32_t total = 0;
+        if (unix_gather_iov(r, mh.iov, mh.iovlen, sbuf, sizeof(sbuf), &total) != 0)
+            return -LINUX_EFAULT;
+        int gfds[28];
+        int nfds = mh.ctrl != 0 ? unix_cmsg_fds(r, mh.ctrl, mh.ctrllen, gfds, 28) : 0;
+        if (nfds < 0)
+            return nfds;
+        int32_t rc = unix_send_data(uslot, sbuf, total, nfds > 0 ? gfds : NULL, nfds);
+        if (rc < 0) {
+            for (int i = 0; i < nfds; i++) {
+                if (file_table_unref((uint32_t)gfds[i]) == 0)
+                    file_table_free_slot((uint32_t)gfds[i]);
+            }
+        }
+        return rc;
+    }
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 0))
         return -LINUX_EFAULT;
     struct LINUX_MSGHDR mh;
@@ -359,8 +376,59 @@ int64_t lc_sendmsg(LC_ARGS) {
     return net_send((int)a, sbuf, total);
 }
 int64_t lc_recvmsg(LC_ARGS) {
-    if (unix_fd_slot(a) >= 0)
-        return -LINUX_ENOTCONN;
+    int uslot = unix_fd_slot(a);
+    if (uslot >= 0) {
+        if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 1))
+            return -LINUX_EFAULT;
+        struct LINUX_MSGHDR mh;
+        memcpy(&mh, (const void *)(uintptr_t)b, sizeof mh);
+        uint8_t rbuf[UNIX_MAX_IOV];
+        int gfds[28];
+        int nfds = 0;
+        int32_t n = unix_recv_data(uslot, rbuf, sizeof(rbuf), gfds, &nfds);
+        if (n < 0)
+            return n;
+        uint32_t copied = 0;
+        if (mh.iov != 0 && mh.iovlen > 0) {
+            uint64_t ent = mh.iov;
+            if (!user_ptr_ok(r, ent, sizeof(struct LINUX_IOVEC), 1))
+                return -LINUX_EFAULT;
+            struct LINUX_IOVEC iv;
+            memcpy(&iv, (const void *)(uintptr_t)ent, sizeof iv);
+            uint32_t n2 = iv.iov_len > (uint64_t)(uint32_t)n ? (uint32_t)n : (uint32_t)iv.iov_len;
+            if (n2 != 0) {
+                if (!user_ptr_ok(r, (uint64_t)iv.iov_base, n2, 1))
+                    return -LINUX_EFAULT;
+                memcpy((void *)(uintptr_t)iv.iov_base, rbuf, n2);
+            }
+            copied = n2;
+        }
+        if (nfds > 0 && mh.ctrl != 0 && mh.ctrllen >= 16 + 4u * (uint32_t)nfds) {
+            uint64_t caddr = mh.ctrl;
+            uint64_t clen = 16 + 4u * (uint32_t)nfds;
+            memset((void *)(uintptr_t)caddr, 0, (size_t)clen);
+            memcpy((void *)(uintptr_t)caddr, &clen, 8);
+            int32_t level = 1;
+            int32_t type = 1;
+            memcpy((void *)(uintptr_t)(caddr + 8), &level, 4);
+            memcpy((void *)(uintptr_t)(caddr + 12), &type, 4);
+            for (int i = 0; i < nfds; i++) {
+                int lfd = fd_install_from((uint32_t)gfds[i], 3);
+                if (lfd < 0) {
+                    if (file_table_unref((uint32_t)gfds[i]) == 0)
+                        file_table_free_slot((uint32_t)gfds[i]);
+                    continue;
+                }
+                memcpy((void *)(uintptr_t)(caddr + 16 + 4u * i), &lfd, 4);
+            }
+            mh.ctrllen = clen;
+        } else {
+            mh.ctrllen = 0;
+        }
+        mh.flags = 0;
+        memcpy((void *)(uintptr_t)b, &mh, sizeof mh);
+        return (int64_t)copied;
+    }
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 1))
         return -LINUX_EFAULT;
     struct LINUX_MSGHDR mh;
@@ -410,27 +478,9 @@ int64_t lc_socketpair(LC_ARGS) {
         return -LINUX_EINVAL;
     if (d == 0 || !user_ptr_ok(r, d, 8, 1))
         return -LINUX_EFAULT;
-    int i0 = unix_alloc_slot();
-    int i1 = -1;
-    if (i0 >= 0)
-        i1 = unix_alloc_slot();
-    if (i0 < 0 || i1 < 0)
-        return -LINUX_ENFILE;
-    memset(&u_unix[i0], 0, sizeof(u_unix[i0]));
-    memset(&u_unix[i1], 0, sizeof(u_unix[i1]));
-    u_unix[i0].active = 1;
-    u_unix[i1].active = 1;
-    u_unix[i0].connected = 1;
-    u_unix[i1].connected = 1;
-    u_unix[i0].type = (uint8_t)b;
-    u_unix[i1].type = (uint8_t)b;
-    u_unix[i0].peer = (int8_t)i1;
-    u_unix[i1].peer = (int8_t)i0;
-    u_unix[i0].self = (int8_t)i0;
-    u_unix[i1].self = (int8_t)i1;
     int32_t out[2];
-    out[0] = UNIX_FD_BASE + i0;
-    out[1] = UNIX_FD_BASE + i1;
+    if (unix_socketpair((int)b, out) != 0)
+        return -LINUX_ENFILE;
     memcpy((void *)(uintptr_t)d, out, sizeof(out));
     return 0;
 }
@@ -554,11 +604,12 @@ int io_fd_events(int fd, int want_read, int want_write) {
         return rv;
     i = unix_fd_slot((uint64_t)fd);
     if (i >= 0) {
-        if (want_read && u_unix[i].count > 0)
+        uint32_t ev = unix_events(i);
+        if (want_read && (ev & 1u))
             rv |= LINUX_POLLIN;
-        if (u_unix[i].connected && !unix_peer_alive(i))
+        if (ev & 2u)
             rv |= LINUX_POLLHUP;
-        if (want_write && unix_peer_alive(i))
+        if (want_write && !(ev & 2u))
             rv |= LINUX_POLLOUT;
         return rv;
     }

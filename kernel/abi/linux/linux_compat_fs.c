@@ -11,6 +11,7 @@
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/proc.h"
+#include "kernel/ipc/unix_sock.h"
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
 #include "kernel/abi/linux/linux_compat.h"
@@ -844,6 +845,12 @@ int64_t lc_lseek(LC_ARGS) {
     return sys_lseek((int32_t)a, (int32_t)b, (uint8_t)(c + 1u));
 }
 int64_t lc_fcntl(LC_ARGS) {
+    int uslot = unix_fd_slot((uint64_t)a);
+    if (uslot >= 0) {
+        if ((int32_t)b == LINUX_F_SETFL)
+            unix_set_nonblock(uslot, (c & LINUX_O_NONBLOCK) != 0);
+        return 0;
+    }
     return sys_fcntl((int32_t)a, (int32_t)b, c);
 }
 #define FLOCK_TAB_N 16

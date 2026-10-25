@@ -173,6 +173,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         ("exec.o",       KERNEL_DIR / "userprog" / "exec.c"),
         ("pe.o",         KERNEL_DIR / "abi" / "win32" / "pe.c"),
         ("pipe.o",       KERNEL_DIR / "ipc" / "pipe.c"),
+        ("unix_sock.o",  KERNEL_DIR / "ipc" / "unix_sock.c"),
         ("ksyscall.o",   KERNEL_DIR / "syscall" / "syscall.c"),
         ("signal.o",     KERNEL_DIR / "syscall" / "signal.c"),
         ("file_syscall.o",KERNEL_DIR / "syscall" / "file_syscall.c"),
@@ -511,7 +512,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         "ide.o", "block.o", "nvme.o", "pci.o", "pbcache.o", "ext2.o", "ext4.o", "vfs.o", "fs.o", "inode.o",
         "dir.o", "file.o", "proc.o", "chardev.o", "devfs.o", "drm.o",
         "gdt.o", "tss.o", "process.o", "exec.o", "pe.o",
-        "pipe.o", "ksyscall.o", "mmap.o", "futex.o",
+        "pipe.o", "unix_sock.o", "ksyscall.o", "mmap.o", "futex.o",
         "linux_compat.o", "linux_compat_io.o", "linux_compat_fs.o", "linux_compat_proc.o", "win32.o", "win32_gdi.o", "signal.o", "file_syscall.o",
         "usyscall.o", "ustdio.o", "wait_exit.o", "fork.o", "clone.o",
         "lc_clone.o",
@@ -708,6 +709,15 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             tasks.append(link_musl_user(
                 "musl_py_compat_probe.elf", BUILD_DIR / "py_compat_probe.elf",
                 [BUILD_DIR / "py_compat_probe.o"]))
+            ux_test_c = task_cc(
+                "test_unixsock.o", TESTS / "probes" / "unixsock_test.c",
+                BUILD_DIR / "unixsock_test.o", tools, MUSL_DEMO_CFLAGS)
+            ux_test_c.optional = True
+            ux_test_c.group = "musl"
+            tasks.append(ux_test_c)
+            tasks.append(link_musl_user(
+                "test_unixsock.elf", BUILD_DIR / "unixsock_test.elf",
+                [BUILD_DIR / "unixsock_test.o"]))
         sh_c = task_cc("musl_sh.o", USER_DIR / "apps" / "sh.c", BUILD_DIR / "sh.o",
                        tools, MUSL_DEMO_CFLAGS)
         sh_c.optional = True
