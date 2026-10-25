@@ -41,7 +41,7 @@ FILES = [
     "pty_demo.elf", "jc_demo.elf", "pcre2_demo.elf", "at_probe.elf",
     "futex_bs_probe.elf", "compat_stub_probe.elf",
     "rust_hello.elf", "rust_probe.elf", "rust_probe2.elf", "fish.elf",
-    "unixsock_test.elf", "memfdtest.elf", "wlsmoke.elf",
+    "unixsock_test.elf", "memfdtest.elf", "wlsmoke.elf", "waytest.elf",
     "tlsclient.elf", "apktls.elf", "kmstest.elf", "dirtest.elf",
     "shell.elf",
 ]

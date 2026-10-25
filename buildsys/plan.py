@@ -737,6 +737,30 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             wl_smoke_c.optional = True
             wl_smoke_c.group = "musl"
             tasks.append(wl_smoke_c)
+            way_test_c = task_cc(
+                "test_waytest.o", TESTS / "probes" / "waytest.c",
+                BUILD_DIR / "waytest.o", tools,
+                MUSL_DEMO_CFLAGS + ["-I", str(ROOT / "third_party" / "wayland" / "src"),
+                                     "-I", str(ROOT / "third_party" / "wayland"),
+                                     "-I", str(BUILD_DIR / "wayland-gen")])
+            way_test_c.optional = True
+            way_test_c.group = "musl"
+            tasks.append(way_test_c)
+            way_test_link = Task(
+                name="test_waytest.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "waytest.o"), str(MUSL_LIB / "crtn.o"),
+                     str(BUILD_DIR / "wayland" / "libwayland-client.a"),
+                     str(BUILD_DIR / "wayland" / "libwayland-server.a"),
+                     str(BUILD_DIR / "ffi" / "lib" / "libffi.a"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "waytest.elf")],
+                out=BUILD_DIR / "waytest.elf",
+                optional=True, group="musl",
+                description="link waytest.elf (wayland end-to-end)")
+            tasks.append(way_test_link)
             wl_smoke_link = Task(
                 name="test_wlsmoke.elf",
                 cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",

@@ -884,13 +884,12 @@ int64_t lc_fcntl(LC_ARGS) {
     if (uslot >= 0) {
         if ((int32_t)b == LINUX_F_SETFL)
             unix_set_nonblock(uslot, (c & LINUX_O_NONBLOCK) != 0);
-        return 0;
+    } else if (pseudo_fd_slot((int32_t)a) < 0) {
+        return sys_fcntl((int32_t)a, (int32_t)b, c);
     }
-    if (pseudo_fd_slot((int32_t)a) >= 0) {
-        if ((int32_t)b == LINUX_F_DUPFD || (int32_t)b == LINUX_F_DUPFD_CLOEXEC)
-            return a;
-        return 0;
-    }
+    if ((int32_t)b == LINUX_F_DUPFD || (int32_t)b == LINUX_F_DUPFD_CLOEXEC)
+        return a;
+    return 0;
     return sys_fcntl((int32_t)a, (int32_t)b, c);
 }
 #define FLOCK_TAB_N 16
