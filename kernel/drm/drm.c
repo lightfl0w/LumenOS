@@ -85,6 +85,8 @@ static struct GFX_CANVAS drm_scanout_canvas;
 
 static struct SCHED_LOCK drm_lock;
 
+static struct drm_client *drm_master;
+
 static void drm_fill_mode(struct drm_mode_modeinfo *m) {
     memset(m, 0, sizeof(*m));
     m->clock = drm_w * drm_h * 60 / 1000;
@@ -181,6 +183,12 @@ static int drm_open(struct FILE *file, uint32_t devnum) {
 }
 
 static void drm_release(struct FILE *file) {
+    struct drm_client *c = (struct drm_client *)file->dev_priv;
+
+    if (c != NULL && drm_master == c) {
+        drm_master = NULL;
+    }
+
     kfree(file->dev_priv);
     file->dev_priv = NULL;
 }
@@ -254,7 +262,8 @@ static int32_t drm_ioctl_get_cap(struct drm_get_cap *c) {
         c->value = 64;
         return 0;
     default:
-        return -22;
+        c->value = 0;
+        return 0;
     }
 }
 
@@ -666,6 +675,23 @@ static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
     return 0;
 }
 
+static int32_t drm_ioctl_set_master(struct drm_client *c) {
+    if (drm_master != NULL && drm_master != c) {
+        return -16;
+    }
+
+    drm_master = c;
+    return 0;
+}
+
+static int32_t drm_ioctl_drop_master(struct drm_client *c) {
+    if (drm_master == c) {
+        drm_master = NULL;
+    }
+
+    return 0;
+}
+
 static int32_t drm_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
     void *p = (void *)(uintptr_t)arg;
 
@@ -686,6 +712,15 @@ static int32_t drm_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
         rc = drm_ioctl_get_cap((struct drm_get_cap *)p);
         break;
     case DRM_IOCTL_SET_CLIENT_CAP:
+        rc = 0;
+        break;
+    case DRM_IOCTL_SET_MASTER:
+        rc = drm_ioctl_set_master((struct drm_client *)file->dev_priv);
+        break;
+    case DRM_IOCTL_DROP_MASTER:
+        rc = drm_ioctl_drop_master((struct drm_client *)file->dev_priv);
+        break;
+    case DRM_IOCTL_AUTH_MAGIC:
         rc = 0;
         break;
     case DRM_IOCTL_MODE_GETRESOURCES:
