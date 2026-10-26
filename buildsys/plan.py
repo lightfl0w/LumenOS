@@ -776,6 +776,35 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                 optional=True, group="musl",
                 description="link wlsmoke.elf (wayland smoke)")
             tasks.append(wl_smoke_link)
+            drm_test_c = task_cc(
+                "test_drmtest.o", TESTS / "probes" / "drmtest.c",
+                BUILD_DIR / "drmtest.o", tools,
+                MUSL_DEMO_CFLAGS + ["-D__linux__",
+                                     "-I", str(BUILD_DIR / "pixman" / "include"),
+                                     "-I", str(BUILD_DIR / "libdrm" / "include"),
+                                     "-I", str(BUILD_DIR / "libdrm" / "include" / "drm")])
+            drm_test_c.optional = True
+            drm_test_c.group = "musl"
+            drm_test_c.deps = drm_test_c.deps + [BUILD_DIR / "pixman" / "lib" / "libpixman-1.a",
+                                                  BUILD_DIR / "libdrm" / "lib" / "libdrm.a"]
+            tasks.append(drm_test_c)
+            drm_test_link = Task(
+                name="test_drmtest.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "drmtest.o"), str(MUSL_LIB / "crtn.o"),
+                     str(BUILD_DIR / "libdrm" / "lib" / "libdrm.a"),
+                     str(BUILD_DIR / "pixman" / "lib" / "libpixman-1.a"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "-lm", "--end-group",
+                     "-o", str(BUILD_DIR / "drmtest.elf")],
+                out=BUILD_DIR / "drmtest.elf",
+                deps=[BUILD_DIR / "libdrm" / "lib" / "libdrm.a",
+                      BUILD_DIR / "pixman" / "lib" / "libpixman-1.a"],
+                optional=True, group="musl",
+                description="link drmtest.elf (pixman + libdrm)")
+            tasks.append(drm_test_link)
+            user_elves.append(drm_test_link)
         sh_c = task_cc("musl_sh.o", USER_DIR / "apps" / "sh.c", BUILD_DIR / "sh.o",
                        tools, MUSL_DEMO_CFLAGS)
         sh_c.optional = True
@@ -945,6 +974,99 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             deps=[ffi_prefix / "lib" / "libffi.a"],
             optional=True, group="musl-lib",
             description="build static libwayland against musl"))
+
+        pixman_src = ROOT / "third_party" / "pixman"
+        pixman_prefix = BUILD_DIR / "pixman"
+        libdrm_src = ROOT / "third_party" / "libdrm"
+        libdrm_prefix = BUILD_DIR / "libdrm"
+        pixman_config = [
+            "HAVE_BUILTIN_CLZ", "HAVE_DLFCN_H", "HAVE_GETTIMEOFDAY",
+            "HAVE_INTTYPES_H", "HAVE_MMAP", "HAVE_MPROTECT",
+            "HAVE_POSIX_MEMALIGN", "HAVE_PTHREADS", "HAVE_STDINT_H",
+            "HAVE_STDLIB_H", "HAVE_STRINGS_H", "HAVE_STRING_H",
+            "HAVE_SYS_MMAN_H", "HAVE_SYS_STAT_H", "HAVE_SYS_TYPES_H",
+            "HAVE_UNISTD_H", "HAVE_FENV_H", "HAVE_SIGACTION", "HAVE_ALARM",
+            "HAVE_GETPAGESIZE",
+        ]
+        pixman_config_lines = ["#define %s 1" % m for m in pixman_config] + [
+            '#define PACKAGE "pixman"',
+            '#define PACKAGE_NAME "pixman"',
+            '#define PACKAGE_VERSION "0.42.2"',
+            '#define VERSION "0.42.2"',
+            "#define SIZEOF_LONG 8",
+            "#define STDC_HEADERS 1",
+            "#define TOOLCHAIN_SUPPORTS_ATTRIBUTE_CONSTRUCTOR 1",
+            "#define USE_GCC_INLINE_ASM 1",
+            "#define USE_X86_MMX 1",
+            "#define USE_SSE2 1",
+            "#define USE_SSSE3 1",
+            "#define TLS __thread",
+        ]
+        pixman_cfg_cmd = "printf '%s\\n' " + " ".join(
+            shlex.quote(x) for x in pixman_config_lines
+        ) + ' > "$PB/obj/config.h"; '
+        pixman_ver_cmd = (
+            'sed -e "s/@PIXMAN_VERSION_MAJOR@/0/g" '
+            '-e "s/@PIXMAN_VERSION_MINOR@/42/g" '
+            '-e "s/@PIXMAN_VERSION_MICRO@/2/g" '
+            'pixman/pixman-version.h.in > "$PB/obj/pixman-version.h"; '
+        )
+        pixman_script = (
+            "set -e; " + _musl_pick +
+            f"PS={shlex.quote(str(pixman_src))}; "
+            f"PB={shlex.quote(str(pixman_prefix))}; "
+            'mkdir -p "$PB/obj" "$PB/lib" "$PB/include"; '
+            'CRI=$("$MC" -print-resource-dir 2>/dev/null)/include; '
+            + pixman_cfg_cmd +
+            'cd "$PS"; ' + pixman_ver_cmd +
+            "for f in pixman.c pixman-access.c pixman-access-accessors.c pixman-bits-image.c pixman-combine32.c pixman-combine-float.c pixman-conical-gradient.c pixman-filter.c pixman-x86.c pixman-mips.c pixman-arm.c pixman-ppc.c pixman-edge.c pixman-edge-accessors.c pixman-fast-path.c pixman-glyph.c pixman-general.c pixman-gradient-walker.c pixman-image.c pixman-implementation.c pixman-linear-gradient.c pixman-matrix.c pixman-noop.c pixman-radial-gradient.c pixman-region16.c pixman-region32.c pixman-solid-fill.c pixman-timer.c pixman-trap.c pixman-utils.c pixman-mmx.c pixman-sse2.c; do "
+            '"$MC" -c pixman/$f -o "$PB/obj/${f%.c}.o" -O2 -fPIC -std=gnu17 '
+            f"-DHAVE_CONFIG_H -I\"$PB/obj\" -I. -Ipixman "
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '-isystem "$CRI"; done; '
+            '"$MC" -c pixman/pixman-ssse3.c -o "$PB/obj/pixman-ssse3.o" '
+            "-O2 -fPIC -std=gnu17 -mssse3 -DHAVE_CONFIG_H "
+            '-I"$PB/obj" -I. -Ipixman '
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '-isystem "$CRI"; '
+            'llvm-ar rcs "$PB/lib/libpixman-1.a" "$PB"/obj/*.o; '
+            'cp pixman/pixman.h "$PB/include/"; '
+            'cp "$PB/obj/pixman-version.h" "$PB/include/"'
+        )
+        tasks.append(Task(
+            name="pixman-static-lib",
+            cmd=[sh, "-c", pixman_script],
+            out=pixman_prefix / "lib" / "libpixman-1.a",
+            deps=[MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static pixman against musl"))
+
+        libdrm_script = (
+            "set -e; " + _musl_pick +
+            f"DS={shlex.quote(str(libdrm_src))}; "
+            f"DB={shlex.quote(str(libdrm_prefix))}; "
+            'mkdir -p "$DB/obj" "$DB/lib" "$DB/include/drm"; '
+            'cd "$DS"; '
+            'python3 gen_table_fourcc.py include/drm/drm_fourcc.h '
+            '"$DB/obj/generated_static_table_fourcc.h"; '
+            "for f in xf86drm xf86drmHash xf86drmRandom xf86drmSL xf86drmMode; "
+            'do "$MC" -c $f.c -o "$DB/obj/$f.o" -O2 -fPIC -std=gnu17 '
+            "-include sys/sysmacros.h -I. -Iinclude/drm "
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '-I"$DB/obj"; done; '
+            'llvm-ar rcs "$DB/lib/libdrm.a" "$DB"/obj/xf86drm*.o; '
+            'cp xf86drm.h xf86drmMode.h libdrm_lists.h libdrm_macros.h '
+            'util_double_list.h util_math.h libsync.h "$DB/include/"; '
+            'cp include/drm/*.h "$DB/include/drm/"; '
+            'cp "$DB/obj/generated_static_table_fourcc.h" "$DB/include/drm/"'
+        )
+        tasks.append(Task(
+            name="libdrm-static-lib",
+            cmd=[sh, "-c", libdrm_script],
+            out=libdrm_prefix / "lib" / "libdrm.a",
+            deps=[MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static libdrm against musl"))
 
         if (PCRE2_SRC / "configure").exists():
             pcre2_script = (

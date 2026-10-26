@@ -19,3 +19,9 @@
 [submodule "third_party/libffi"]
 	path = third_party/libffi
 	url = https://github.com/libffi/libffi.git
+[submodule "third_party/pixman"]
+	path = third_party/pixman
+	url = https://gitlab.freedesktop.org/pixman/pixman.git
+[submodule "third_party/libdrm"]
+	path = third_party/libdrm
+	url = https://gitlab.freedesktop.org/mesa/drm.git

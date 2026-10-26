@@ -43,7 +43,7 @@ FILES = [
     "rust_hello.elf", "rust_probe.elf", "rust_probe2.elf", "fish.elf",
     "unixsock_test.elf", "memfdtest.elf", "wlsmoke.elf", "waytest.elf",
     "tlsclient.elf", "apktls.elf", "kmstest.elf", "dirtest.elf",
-    "shell.elf",
+    "shell.elf", "drmtest.elf",
 ]
 SHARE_FILES = [
     "font_subset.ttf", "wallpaper.png", "pic1.png", "pic2.png",

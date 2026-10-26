@@ -195,22 +195,30 @@ static void drm_release(struct FILE *file) {
 
 static int32_t drm_read(struct FILE *file, void *buf, int32_t count) {
     struct drm_client *c = (struct drm_client *)file->dev_priv;
-    if (c == NULL || count < (int32_t)sizeof(struct drm_event_vblank)) {
+    if (c == NULL || count < (int32_t)sizeof(struct drm_event)) {
         return -22;
     }
+
     while (c->count == 0) {
         if (file->fd_nonblock) {
             return -11;
         }
+
         c->waiter = current;
         uint32_t bf = thread_block_prepare(TASK_BLOCKED);
         thread_block_commit(bf);
     }
+
     struct drm_event_vblank *ev = &c->events[c->next % DRM_EVENT_RING];
-    memcpy(buf, ev, sizeof(*ev));
+    int32_t n = (int32_t)sizeof(*ev);
+    if (n > count) {
+        n = count;
+    }
+
+    memcpy(buf, ev, (size_t)n);
     c->next++;
     c->count--;
-    return (int32_t)sizeof(*ev);
+    return n;
 }
 
 static uint32_t drm_poll(struct FILE *file) {
