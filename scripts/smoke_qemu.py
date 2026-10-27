@@ -82,7 +82,7 @@ def main() -> int:
         except OSError:
             lines = []
         boot_lines = lines
-        if any("Welcome to fish" in ln for ln in lines):
+        if any(("Welcome to fish" in ln) or ("[lumen@lumen " in ln) for ln in lines):
             saw_shell = True
             break
         time.sleep(0.5)

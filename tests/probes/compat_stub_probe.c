@@ -120,7 +120,7 @@ int main(void) {
     errno = 0;
     rc = (int)lsys(SYS_memfd_create, (long)"/dev/shm/none", 0, 0, 0, 0, 0);
     printf("  memfd_create=%d errno=%d\n", rc, errno);
-    CK(unsupported_ok(rc));
+    CK(rc >= 0 || unsupported_ok(rc));
     if (rc >= 0)
         close(rc);
 

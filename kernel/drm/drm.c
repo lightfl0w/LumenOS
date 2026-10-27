@@ -172,6 +172,33 @@ static void drm_scanout_gem(struct drm_gem *gem) {
     }
 }
 
+static void drm_scanout_blit(struct drm_gem *gem, uint32_t sx, uint32_t sy, uint32_t sw,
+                             uint32_t sh, int32_t dx, int32_t dy, uint32_t dw, uint32_t dh) {
+    if (sw == 0 || sh == 0 || dw == 0 || dh == 0) {
+        return;
+    }
+    if (dx == 0 && dy == 0 && sx == 0 && sy == 0 && sw == dw && sh == dh && sw == drm_w &&
+        sh == drm_h) {
+        drm_scanout_gem(gem);
+        return;
+    }
+    struct GFX_CANVAS src;
+    src.pixels = (gfx_color *)(uintptr_t)VIRT_OF(gem->phys);
+    src.pitch = (int)gem->pitch;
+    src.w = (int)gem->w;
+    src.h = (int)gem->h;
+    src.bytes = (size_t)gem->size;
+
+    gfx_blit_scale(&drm_scanout_canvas, dx, dy, (int)dw, (int)dh, &src, (int)sx, (int)sy, (int)sw,
+                   (int)sh);
+
+    struct GUI_UDI_OPS *ops = udi_active();
+    if (ops != NULL) {
+        struct GFX_RECT full = {0, 0, (int)drm_w, (int)drm_h};
+        ops->commit(drm_scanout.handle, &full, 1);
+    }
+}
+
 static int drm_open(struct FILE *file, uint32_t devnum) {
     struct drm_client *c = kmalloc(sizeof(*c));
     if (c == NULL) {
@@ -230,22 +257,27 @@ static uint32_t drm_poll(struct FILE *file) {
     return rv;
 }
 
+static void drm_version_str(char *dst, uint64_t *dst_len, const char *src) {
+    size_t len = strlen(src);
+    if (dst == NULL) {
+        *dst_len = len + 1;
+        return;
+    }
+    size_t n = *dst_len < len ? (size_t)*dst_len : len;
+    if (n != 0) {
+        memcpy(dst, src, n);
+    }
+    *dst_len = n;
+}
+
 static int32_t drm_ioctl_version(struct drm_version *v) {
     v->version_major = 1;
     v->version_minor = 1;
     v->version_patchlevel = 0;
-    if (v->name_len > strlen(DRM_NAME) + 1) {
-        v->name_len = strlen(DRM_NAME) + 1;
-    }
-    if (v->date_len > strlen(DRM_DATE) + 1) {
-        v->date_len = strlen(DRM_DATE) + 1;
-    }
-    if (v->desc_len > strlen(DRM_DESC) + 1) {
-        v->desc_len = strlen(DRM_DESC) + 1;
-    }
-    memcpy(v->name, DRM_NAME, v->name_len);
-    memcpy(v->date, DRM_DATE, v->date_len);
-    memcpy(v->desc, DRM_DESC, v->desc_len);
+
+    drm_version_str(v->name, &v->name_len, DRM_NAME);
+    drm_version_str(v->date, &v->date_len, DRM_DATE);
+    drm_version_str(v->desc, &v->desc_len, DRM_DESC);
     return 0;
 }
 
@@ -536,11 +568,11 @@ static int32_t drm_ioctl_get_plane(struct drm_mode_get_plane *p) {
     p->fb_id = drm_crtc_fb;
     p->possible_crtcs = 1;
     p->gamma_size = 0;
-    if (p->count_format_types >= 1 && p->format_type_ptr != 0) {
-        uint32_t formats[1] = {DRM_FORMAT_XRGB8888};
+    if (p->count_format_types >= 2 && p->format_type_ptr != 0) {
+        uint32_t formats[2] = {DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888};
         memcpy((void *)(uintptr_t)p->format_type_ptr, formats, sizeof(formats));
-        p->count_format_types = 1;
     }
+    p->count_format_types = 2;
     return 0;
 }
 
@@ -625,8 +657,12 @@ static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
 
     uint32_t fb_val = 0;
     uint32_t crtc_val = 0;
+    uint64_t src_x = 0;
+    uint64_t src_y = 0;
     uint64_t src_w = 0;
     uint64_t src_h = 0;
+    uint64_t crtc_x = 0;
+    uint64_t crtc_y = 0;
     uint64_t crtc_w = 0;
     uint64_t crtc_h = 0;
 
@@ -643,11 +679,23 @@ static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
                 case DRM_PROP_CRTC_ID:
                     crtc_val = (uint32_t)value;
                     break;
+                case DRM_PROP_SRC_X:
+                    src_x = value;
+                    break;
+                case DRM_PROP_SRC_Y:
+                    src_y = value;
+                    break;
                 case DRM_PROP_SRC_W:
                     src_w = value;
                     break;
                 case DRM_PROP_SRC_H:
                     src_h = value;
+                    break;
+                case DRM_PROP_CRTC_X:
+                    crtc_x = value;
+                    break;
+                case DRM_PROP_CRTC_Y:
+                    crtc_y = value;
                     break;
                 case DRM_PROP_CRTC_W:
                     crtc_w = value;
@@ -666,16 +714,39 @@ static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
         return (a->flags & DRM_MODE_ATOMIC_TEST_ONLY) ? 0 : 0;
     }
     struct drm_fb *fb = drm_fb_by_id(fb_val);
-    if (fb == NULL || crtc_val != DRM_OBJ_CRTC || src_w != fb->gem->w || src_h != fb->gem->h ||
-        crtc_w != drm_w || crtc_h != drm_h) {
+    if (fb == NULL || crtc_val != DRM_OBJ_CRTC) {
         return -22;
+    }
+    if (src_w == 0 || src_h == 0 || crtc_w == 0 || crtc_h == 0) {
+        return -22;
+    }
+
+    uint32_t sw = (uint32_t)(src_w >> 16);
+    uint32_t sh = (uint32_t)(src_h >> 16);
+    uint32_t sx = (uint32_t)(src_x >> 16);
+    uint32_t sy = (uint32_t)(src_y >> 16);
+    if (sw == 0 || sh == 0) {
+        sw = (uint32_t)src_w;
+        sh = (uint32_t)src_h;
+        sx = (uint32_t)src_x;
+        sy = (uint32_t)src_y;
+    }
+    if (sx >= fb->gem->w || sy >= fb->gem->h) {
+        return -22;
+    }
+    if (sw > fb->gem->w - sx) {
+        sw = fb->gem->w - sx;
+    }
+    if (sh > fb->gem->h - sy) {
+        sh = fb->gem->h - sy;
     }
     if (a->flags & DRM_MODE_ATOMIC_TEST_ONLY) {
         return 0;
     }
 
     drm_crtc_fb = fb->id;
-    drm_scanout_gem(fb->gem);
+    drm_scanout_blit(fb->gem, sx, sy, sw, sh, (int32_t)crtc_x, (int32_t)crtc_y, (uint32_t)crtc_w,
+                     (uint32_t)crtc_h);
     if (a->flags & DRM_MODE_PAGE_FLIP_EVENT) {
         drm_push_event((struct drm_client *)file->dev_priv, DRM_EVENT_FLIP_COMPLETE,
                        a->user_data);
