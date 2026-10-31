@@ -1,3 +1,4 @@
+#include "arch/x86_64/percpu.h"
 #include "arch/interrupt/interrupt.h"
 #include "drivers/char/serial/console/io.h"
 #include "drivers/char/serial/ioqueue.h"
@@ -400,7 +401,7 @@ int64_t lc_fchmodat(LC_ARGS) {
 int64_t lc_close(LC_ARGS) {
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
-        unix_close_slot(uslot);
+        unix_fd_release((int32_t)current->pid, a);
         return 0;
     }
     if (lc_close_extra((int32_t)a) != 0)
@@ -530,12 +531,19 @@ int32_t compat_fstat_linux(int32_t fd, uint64_t ub) {
         compat_stat_fill(&ls, 0, 0, LINUX_S_IFIFO | 0600u, 0, 0);
     } else {
         uint32_t gfd = fd_local2global((uint32_t)fd);
-        struct FILE *pf = file_get(gfd);
-        if (pf == NULL || pf->fd_inode == NULL)
+        struct FILE *pf = gfd != (uint32_t)-1 ? file_get(gfd) : NULL;
+        if (pf == NULL)
             return -LINUX_EBADF;
-        compat_stat_fill(&ls, pf->fd_inode->i_no, (int64_t)pf->fd_inode->i_size,
-                         pf->fd_inode->i_mode, pf->fd_inode->i_uid, pf->fd_inode->i_gid);
-        stat_fill_inode(&ls, pf->fd_inode->i_no, pf->fd_inode->i_mode);
+        if (pf->fd_inode == NULL && pf->devfs_node != 0 && pf->devfs_node != (uint32_t)-1) {
+            compat_stat_fill(&ls, 0, 0, LINUX_S_IFCHR | 0600u, 0, 0);
+            ls.st_rdev = ((uint64_t)pf->dev_major << 8) | (uint64_t)pf->dev_minor;
+        } else if (pf->fd_inode == NULL) {
+            return -LINUX_EBADF;
+        } else {
+            compat_stat_fill(&ls, pf->fd_inode->i_no, (int64_t)pf->fd_inode->i_size,
+                             pf->fd_inode->i_mode, pf->fd_inode->i_uid, pf->fd_inode->i_gid);
+            stat_fill_inode(&ls, pf->fd_inode->i_no, pf->fd_inode->i_mode);
+        }
     }
     memcpy((void *)(uintptr_t)ub, &ls, sizeof(ls));
     return 0;
@@ -623,13 +631,30 @@ int32_t compat_write(int32_t fd, const void *buf, uint32_t count) {
     }
     return (int32_t)count;
 }
+static int32_t compat_read_file(int32_t fd, void *buf, uint32_t count, int *handled) {
+    *handled = 0;
+    struct FILE *pf = lc_file_from_fd(fd);
+    if (pf == NULL) {
+        return 0;
+    }
+    if (pf->proc_id != 0) {
+        *handled = 1;
+        return (int32_t)proc_read(pf, buf, count);
+    }
+    const struct CHARDEV_OPS *ops = file_chardev_ops(pf);
+    if (ops != NULL && ops->read != NULL) {
+        *handled = 1;
+        return ops->read(pf, buf, (int32_t)count);
+    }
+    return 0;
+}
+
 int32_t compat_read(int32_t fd, void *buf, uint32_t count) {
     if (fd >= 0 && fd < MAX_FILES_OPEN_PER_PROC) {
-        struct FILE *pf = lc_file_from_fd(fd);
-        if (pf != NULL) {
-            const struct CHARDEV_OPS *ops = file_chardev_ops(pf);
-            if (ops != NULL && ops->read != NULL)
-                return ops->read(pf, buf, (int32_t)count);
+        int handled = 0;
+        int32_t n = compat_read_file(fd, buf, count, &handled);
+        if (handled) {
+            return n;
         }
     }
     int xi = evfd_slot(fd);
@@ -678,6 +703,7 @@ int32_t compat_read(int32_t fd, void *buf, uint32_t count) {
     }
     if (fd == 0)
         return TTY.read((char *)buf, count);
+    kprintf("[crdbg2] compat_read fallback fd=%d\n", fd);
     return -LINUX_EBADF;
 }
 
@@ -868,6 +894,8 @@ int64_t lc_memfd_create(LC_ARGS) {
     return fd < 0 ? -LINUX_EMFILE : fd;
 }
 
+int nl_slot(int fd);
+
 static int pseudo_fd_slot(int32_t fd) {
     int i = evfd_slot(fd);
     if (i < 0)
@@ -876,6 +904,8 @@ static int pseudo_fd_slot(int32_t fd) {
         i = ep_slot(fd);
     if (i < 0)
         i = unix_fd_slot((uint64_t)fd);
+    if (i < 0)
+        i = nl_slot(fd);
     return i;
 }
 

@@ -18,3 +18,9 @@ int32_t devfs_getdents64(struct FILE *file, void *dirp, uint32_t count);
 void devfs_close(struct FILE *file);
 
 #endif
+
+int devfs_lookup_mm(uint32_t major, uint32_t minor, uint32_t *node_id);
+const char *devfs_node_path(uint32_t node_id);
+
+uint32_t devfs_node_major(uint32_t node_id);
+uint32_t devfs_node_minor(uint32_t node_id);

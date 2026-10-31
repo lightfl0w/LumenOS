@@ -3,7 +3,9 @@
 #include "arch/time/pit.h"
 #include "fs/file.h"
 #include "fs/fs.h"
+#include "arch/x86_64/percpu.h"
 #include "kernel/sched/thread.h"
+#include "lib/printf/printf.h"
 #include "lib/string/str.h"
 #include "mm/pool.h"
 
@@ -31,6 +33,7 @@ struct UNIX_SOCK {
     uint8_t state;
     uint8_t nonblock;
     int8_t peer;
+    int32_t refs;
     char path[UNIX_PATH_MAX];
 
     int pending[UNIX_BACKLOG];
@@ -48,6 +51,117 @@ struct UNIX_SOCK {
 };
 
 static struct UNIX_SOCK us[UNIX_MAX_SOCK];
+
+#define UNIX_MAX_OWNERS 16
+struct UNIX_OWNER {
+    int used;
+    int32_t pid;
+    uint32_t mask;
+};
+static struct UNIX_OWNER owners[UNIX_MAX_OWNERS];
+
+static int32_t unix_cur_pid(void) {
+    return (int32_t)current->pid;
+}
+
+static struct UNIX_OWNER *unix_owner_find(int32_t pid, int create) {
+    struct UNIX_OWNER *free_slot = NULL;
+    for (int i = 0; i < UNIX_MAX_OWNERS; i++) {
+        if (owners[i].used && owners[i].pid == pid) {
+            return &owners[i];
+        }
+        if (!owners[i].used && free_slot == NULL) {
+            free_slot = &owners[i];
+        }
+    }
+    if (!create) {
+        return NULL;
+    }
+    if (free_slot != NULL) {
+        free_slot->used = 1;
+        free_slot->pid = pid;
+        free_slot->mask = 0;
+        return free_slot;
+    }
+    return NULL;
+}
+
+static void unix_owner_drop(int32_t pid) {
+    for (int i = 0; i < UNIX_MAX_OWNERS; i++) {
+        if (owners[i].used && owners[i].pid == pid) {
+            owners[i].used = 0;
+            return;
+        }
+    }
+}
+
+void unix_fd_acquire(int32_t pid, uint64_t fd) {
+    int idx = unix_fd_slot(fd);
+    if (idx < 0) {
+        return;
+    }
+    struct UNIX_OWNER *o = unix_owner_find(pid, 1);
+    if (o != NULL && (o->mask & (1u << idx)) == 0) {
+        o->mask |= 1u << idx;
+        us[idx].refs++;
+    }
+}
+
+void unix_fd_release(int32_t pid, uint64_t fd) {
+    int idx = unix_fd_slot(fd);
+    if (idx < 0) {
+        return;
+    }
+    struct UNIX_OWNER *o = unix_owner_find(pid, 0);
+    if (o == NULL || (o->mask & (1u << idx)) == 0) {
+        unix_close_slot(idx);
+        return;
+    }
+    o->mask &= ~(1u << idx);
+    if (us[idx].refs > 0) {
+        us[idx].refs--;
+    }
+    if (us[idx].refs == 0) {
+        unix_close_slot(idx);
+    }
+}
+
+void unix_fds_dup(int32_t parent_pid, int32_t child_pid) {
+    struct UNIX_OWNER *p = unix_owner_find(parent_pid, 0);
+    if (p == NULL) {
+        return;
+    }
+    for (int idx = 0; idx < UNIX_MAX_SOCK; idx++) {
+        if ((p->mask & (1u << idx)) == 0) {
+            continue;
+        }
+        struct UNIX_OWNER *c = unix_owner_find(child_pid, 1);
+        if (c == NULL) {
+            break;
+        }
+        c->mask |= 1u << idx;
+        us[idx].refs++;
+    }
+}
+
+void unix_fds_exit(int32_t pid) {
+    struct UNIX_OWNER *o = unix_owner_find(pid, 0);
+    if (o == NULL) {
+        return;
+    }
+    for (int idx = 0; idx < UNIX_MAX_SOCK; idx++) {
+        if ((o->mask & (1u << idx)) == 0) {
+            continue;
+        }
+        if (us[idx].refs > 0) {
+            us[idx].refs--;
+        }
+        if (us[idx].refs == 0) {
+            unix_close_slot(idx);
+        }
+    }
+    unix_owner_drop(pid);
+}
 
 static struct UNIX_SOCK *sock(int idx) {
     if (idx < 0 || idx >= UNIX_MAX_SOCK || !us[idx].used) {

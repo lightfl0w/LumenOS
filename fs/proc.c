@@ -1,5 +1,6 @@
 #include "fs/proc.h"
 #include "drivers/block/ata/block.h"
+#include "fs/devfs.h"
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/vfs/vfs.h"
@@ -21,7 +22,8 @@ enum {
     PROC_EXE,
     PROC_FD,
     PROC_MAPS,
-    PROC_CMDLINE
+    PROC_CMDLINE,
+    PROC_UEVENT
 };
 
 int proc_match(const char *path) {
@@ -41,6 +43,33 @@ static uint32_t proc_task_of(uint32_t pid) {
 }
 
 static int proc_node_of(const char *path) {
+    if (strcmp(path, "/sys") == 0 || strcmp(path, "/sys/dev") == 0 ||
+        strcmp(path, "/sys/dev/char") == 0) {
+        return PROC_DIR;
+    }
+    if (strncmp(path, "/sys/dev/char/", 14) == 0) {
+        const char *mm = path + 14;
+        uint32_t maj = 0;
+        while (*mm >= '0' && *mm <= '9') {
+            maj = maj * 10u + (uint32_t)(*mm++ - '0');
+        }
+        if (*mm != ':' || maj == 0) {
+            return PROC_NONE;
+        }
+        mm++;
+        uint32_t min = 0;
+        while (*mm >= '0' && *mm <= '9') {
+            min = min * 10u + (uint32_t)(*mm++ - '0');
+        }
+        if (strcmp(mm, "/uevent") != 0) {
+            return PROC_NONE;
+        }
+        uint32_t node_id = 0;
+        if (devfs_lookup_mm(maj, min, &node_id) != 0) {
+            return PROC_NONE;
+        }
+        return (int)(PROC_UEVENT + node_id);
+    }
     if (strcmp(path, "/proc") == 0) {
         return PROC_DIR;
     }
@@ -193,6 +222,25 @@ int proc_open(const char *path, uint8_t flags) {
     file->fd_flag = (node == PROC_DIR || node == PROC_FD) ? PROC_DIRF_FLAG : flags;
     file->fd_inode = NULL;
     file->proc_id = (uint32_t)node;
+    if (node > PROC_UEVENT) {
+        uint32_t node_id = (uint32_t)node - PROC_UEVENT;
+        const char *dpath = devfs_node_path(node_id);
+        if (dpath != NULL && strncmp(dpath, "/dev/", 5) == 0) {
+            dpath += 5;
+        }
+        (void)dpath;
+        file->dev_major = (uint16_t)devfs_node_major(node_id);
+        file->dev_minor = (uint16_t)devfs_node_minor(node_id);
+        file->devfs_node = node_id;
+        file->fd_inode = NULL;
+        file->ref_cnt = 1;
+        int fd2 = fd_install(gfd);
+        if (fd2 == -1) {
+            file_table_free_slot(gfd);
+            return -1;
+        }
+        return fd2;
+    }
     file->proc_aux = (node == PROC_STAT || node == PROC_STATUS || node == PROC_FD) ? proc_pid : 0;
     file->ref_cnt = 1;
     int fd = fd_install(gfd);
@@ -203,9 +251,67 @@ int proc_open(const char *path, uint8_t flags) {
     return fd;
 }
 
+static char *sysfs_put_str(char *w, const char *s) {
+    while (*s) {
+        *w++ = *s++;
+    }
+    return w;
+}
+
+static char *sysfs_put_num(char *w, uint32_t v) {
+    char digits[12];
+    int nd = 0;
+    do {
+        digits[nd++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    } while (v != 0);
+    while (nd > 0) {
+        *w++ = digits[--nd];
+    }
+    return w;
+}
+
+static uint32_t proc_uevent_build(char *info, uint32_t cap, uint32_t node_id,
+                                  const struct FILE *file) {
+    const char *dpath = devfs_node_path(node_id);
+    if (dpath == NULL) {
+        return 0;
+    }
+    if (strncmp(dpath, "/dev/", 5) == 0) {
+        dpath += 5;
+    }
+    char *w = info;
+    char *end = info + cap;
+    w = sysfs_put_str(w, "MAJOR=");
+    w = sysfs_put_num(w, file->dev_major);
+    w = sysfs_put_str(w, "\nMINOR=");
+    w = sysfs_put_num(w, file->dev_minor);
+    w = sysfs_put_str(w, "\nDEVNAME=");
+    w = sysfs_put_str(w, dpath);
+    w = sysfs_put_str(w, "\n");
+    return w > end ? 0 : (uint32_t)(w - info);
+}
+
+static uint32_t proc_read_uevent(struct FILE *file, void *buf, uint32_t count) {
+    char info[256];
+    uint32_t len = proc_uevent_build(info, sizeof(info),
+                                     file->proc_id - PROC_UEVENT, file);
+    if (len == 0 || file->fd_pos >= len) {
+        return 0;
+    }
+    uint32_t remain = len - file->fd_pos;
+    uint32_t n = count < remain ? count : remain;
+    memcpy(buf, info + file->fd_pos, n);
+    file->fd_pos += n;
+    return n;
+}
+
 uint32_t proc_read(struct FILE *file, void *buf, uint32_t count) {
     char info[256];
     uint32_t len;
+    if (file->proc_id > PROC_UEVENT) {
+        return proc_read_uevent(file, buf, count);
+    }
     if (file->proc_id == PROC_MEMINFO) {
         len = meminfo_build(info, sizeof(info));
     } else if (file->proc_id == PROC_MOUNTS) {
@@ -275,6 +381,9 @@ int proc_fstat(struct FILE *file, struct FS_STAT *buf) {
     } else if (file->proc_id == PROC_EXE) {
         buf->st_filetype = FT_SYMLINK;
         buf->st_size = proc_size((int)file->proc_id);
+    } else if (file->proc_id > PROC_UEVENT) {
+        buf->st_filetype = FT_CHARDEVICE;
+        buf->st_size = 0;
     } else {
         buf->st_filetype = FT_REGULAR;
         buf->st_size = proc_size((int)file->proc_id);

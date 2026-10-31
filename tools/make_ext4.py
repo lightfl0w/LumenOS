@@ -43,7 +43,7 @@ FILES = [
     "rust_hello.elf", "rust_probe.elf", "rust_probe2.elf", "fish.elf",
     "unixsock_test.elf", "memfdtest.elf", "wlsmoke.elf", "waytest.elf",
     "tlsclient.elf", "apktls.elf", "kmstest.elf", "dirtest.elf",
-    "shell.elf", "drmtest.elf",
+    "shell.elf", "drmtest.elf", "seatprobe.elf", "wltest.elf",
 ]
 SHARE_FILES = [
     "font_subset.ttf", "wallpaper.png", "pic1.png", "pic2.png",
@@ -67,6 +67,17 @@ BIN_LINKS = ["sh", "su", "login", "id", "ls", "cat", "echo", "ps", "passwd",
              "adduser", "groups", "chmod", "chown", "mkdir", "rm", "cp",
              "env", "uname", "free", "setsid", "hostname", "date", "clear",
              "dmesg", "kill"]
+SYS_DIRS = [
+    "/sys/dev/char/226:0",
+    "/sys/dev/char/226:0/device",
+    "/sys/dev/char/226:0/device/drm",
+]
+SYS_DIRS = SYS_DIRS + []
+SYS_FILES = [
+    ("/sys/dev/char/226:0/uevent", b"MAJOR=226\nMINOR=0\nDEVNAME=dri/card0\n"),
+    ("/etc/a:b", b"colon-test\n"),
+    ("/etc/nocolon", b"plain-test\n"),
+]
 ETC_FILES = [
     ("passwd",
      b"root:x:0:0:root:/:/bin/sh\nuser:x:1000:1000:user:/home/user:/bin/sh\n",
@@ -149,16 +160,27 @@ def debugfs_cmds(bd, tmp, pre, names, smoke):
         cmds.append(f"mkdir {name}")
         cmds.append(f"sif /{name} mode 0{mode:o}")
     apk_dir = bd / "apk"
+    for dest in SYS_DIRS:
+        parts = [p for p in dest.split("/") if p]
+        for i in range(1, len(parts) + 1):
+            cmds.append("mkdir " + "/".join(parts[:i]))
+    for dest, payload in SYS_FILES:
+        parts = [p for p in dest.split("/") if p][:-1]
+        for i in range(1, len(parts) + 1):
+            cmds.append("mkdir " + "/".join(parts[:i]))
+        src = tmp / ("sys_" + dest.replace("/", "_"))
+        src.write_bytes(payload)
+        emit_file(cmds, src, dest, 0o100444)
     apk_static = apk_dir / "tools" / "apk.static"
     if apk_static.exists():
         cmds.append("mkdir etc/apk")
         cmds.append("mkdir etc/apk/keys")
         for key in sorted(apk_dir.glob("keys/*.pub")):
             emit_file(cmds, key, f"/etc/apk/keys/{key.name}", 0o100644)
-        for name, payload, mode in APK_ETC_FILES:
-            src = tmp / ("apk_" + name.replace("/", "_"))
-            src.write_bytes(payload)
-            emit_file(cmds, src, f"/etc/{name}", mode)
+    for name, payload, mode in APK_ETC_FILES:
+        src = tmp / ("apk_" + name.replace("/", "_"))
+        src.write_bytes(payload)
+        emit_file(cmds, src, f"/etc/{name}", mode)
         ca_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
         if not ca_bundle.exists():
             ca_bundle = Path("/etc/ssl/cert.pem")

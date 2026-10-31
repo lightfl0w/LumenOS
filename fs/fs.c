@@ -405,6 +405,9 @@ int open_file_mode(const char *pathname, uint8_t flags, uint32_t mode) {
             pathname = altpath;
         }
     }
+    if (strncmp(pathname, "/sys/dev/char/", 14) == 0) {
+        return proc_open(pathname, flags);
+    }
     if (proc_match(pathname)) {
         return proc_open(pathname, flags);
     }

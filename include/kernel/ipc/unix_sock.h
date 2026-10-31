@@ -20,6 +20,11 @@ int32_t unix_send_data(int idx, const void *buf, uint32_t len, const int *gfds, 
 int32_t unix_recv_data(int idx, void *buf, uint32_t len, int *gfds, int *nfds);
 
 void unix_set_nonblock(int idx, int on);
+
+void unix_fd_acquire(int32_t pid, uint64_t fd);
+void unix_fd_release(int32_t pid, uint64_t fd);
+void unix_fds_dup(int32_t parent_pid, int32_t child_pid);
+void unix_fds_exit(int32_t pid);
 uint32_t unix_events(int idx);
 int unix_peer_alive(int idx);
 void unix_close_slot(int idx);

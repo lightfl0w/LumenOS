@@ -10,7 +10,7 @@
 #define DRM_IOCTL_SET_VERSION 0xc0106407u
 #define DRM_IOCTL_GET_CAP 0xc010640cu
 #define DRM_IOCTL_SET_CLIENT_CAP 0x4010640du
-#define DRM_IOCTL_AUTH_MAGIC 0xc0046403u
+#define DRM_IOCTL_AUTH_MAGIC 0x40046411u
 #define DRM_IOCTL_GET_CLIENT 0xc01c6414u
 #define DRM_IOCTL_SET_MASTER 0x641eu
 #define DRM_IOCTL_DROP_MASTER 0x641fu
@@ -23,6 +23,19 @@
 #define DRM_IOCTL_MODE_GETPROPERTY 0xc04064aau
 #define DRM_IOCTL_MODE_GETFB 0xc01c64adu
 #define DRM_IOCTL_MODE_ADDFB 0xc01c64aeu
+#define DRM_IOCTL_MODE_ADDFB2 0xc06864b8u
+
+struct drm_mode_fb_cmd2 {
+    uint32_t fb_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pixel_format;
+    uint32_t flags;
+    uint32_t handles[4];
+    uint32_t pitches[4];
+    uint32_t offsets[4];
+    uint64_t modifier[4];
+};
 #define DRM_IOCTL_MODE_RMFB 0xc00464afu
 #define DRM_IOCTL_MODE_PAGE_FLIP 0xc01864b0u
 #define DRM_IOCTL_MODE_CREATE_DUMB 0xc02064b2u
@@ -32,6 +45,34 @@
 #define DRM_IOCTL_MODE_GETPLANE 0xc02064b6u
 #define DRM_IOCTL_MODE_OBJ_GETPROPERTIES 0xc02064b9u
 #define DRM_IOCTL_MODE_ATOMIC 0xc03864bcu
+#define DRM_IOCTL_MODE_CREATE_LEASE 0xc01864c6u
+#define DRM_IOCTL_PRIME_HANDLE_TO_FD 0xc00c642du
+#define DRM_IOCTL_PRIME_FD_TO_HANDLE 0xc00c642eu
+
+struct drm_prime_handle {
+    uint32_t handle;
+    uint32_t flags;
+    int32_t fd;
+};
+#define DRM_IOCTL_MODE_CREATEPROPBLOB 0xc01064bdu
+#define DRM_IOCTL_MODE_DESTROYPROPBLOB 0xc00464beu
+#define DRM_IOCTL_MODE_GETPROPBLOB 0xc01064acu
+
+struct drm_mode_create_blob {
+    uint64_t data;
+    uint32_t length;
+    uint32_t blob_id;
+};
+
+struct drm_mode_get_blob {
+    uint32_t blob_id;
+    uint32_t length;
+    uint64_t data;
+};
+
+struct drm_mode_destroy_blob {
+    uint32_t blob_id;
+};
 
 #define DRM_CAP_DUMB_BUFFER 0x1
 #define DRM_CAP_VBLANK_HIGH_CRTC 0x2
@@ -42,6 +83,9 @@
 #define DRM_CAP_CURSOR_HEIGHT 0x9
 #define DRM_CAP_CRTC_IN_VBLANK_EVENT 0x12
 
+#define DRM_CAP_PRIME 5
+#define DRM_PRIME_CAP_EXPORT 1
+#define DRM_PRIME_CAP_IMPORT 2
 #define DRM_CLIENT_CAP_UNIVERSAL_PLANES 2
 #define DRM_CLIENT_CAP_ATOMIC 3
 
@@ -174,11 +218,11 @@ struct drm_mode_get_connector {
 struct drm_mode_get_property {
     uint64_t values_ptr;
     uint64_t enum_blob_ptr;
+    uint32_t prop_id;
+    uint32_t flags;
+    char name[DRM_PROP_NAME_LEN];
     uint32_t count_values;
     uint32_t count_enum_blobs;
-    uint32_t flags;
-    uint32_t prop_id;
-    char name[DRM_PROP_NAME_LEN];
 };
 
 struct drm_mode_fb_cmd {
@@ -275,6 +319,7 @@ struct drm_mode_atomic {
 #define DRM_MODE_PROP_RANGE (1u << 1)
 #define DRM_MODE_PROP_IMMUTABLE (1u << 2)
 #define DRM_MODE_PROP_OBJECT (1u << 6)
+#define DRM_MODE_PROP_ENUM (1u << 3)
 #define DRM_MODE_PROP_ATOMIC 0x80000000u
 
 #define DRM_MODE_OBJECT_CRTC 0xccccccccu

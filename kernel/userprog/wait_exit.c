@@ -1,6 +1,7 @@
 #include "kernel/userprog/wait_exit.h"
 #include "fs/file.h"
 #include "lib/assert.h"
+#include "kernel/ipc/unix_sock.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
 #include "kernel/syscall/futex.h"
@@ -27,6 +28,7 @@ static void clear_child_tid_of(struct TASK *t) {
 }
 
 static void close_owned_fds(struct TASK *t) {
+    unix_fds_exit((int32_t)t->pid);
     if (t->fd_owner_pid != (int32_t)t->pid) {
         return;
     }

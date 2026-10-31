@@ -1,3 +1,4 @@
+#include "mm/access.h"
 #include "uapi/drm.h"
 #include "kernel/drm/drm.h"
 
@@ -45,6 +46,9 @@
 #define DRM_PROP_CRTC_Y 0x107
 #define DRM_PROP_CRTC_W 0x108
 #define DRM_PROP_CRTC_H 0x109
+#define DRM_PROP_TYPE 0x10a
+#define DRM_PROP_ACTIVE 0x110
+#define DRM_PROP_MODE_ID 0x111
 
 struct drm_gem {
     uint8_t used;
@@ -270,6 +274,20 @@ static void drm_version_str(char *dst, uint64_t *dst_len, const char *src) {
     *dst_len = n;
 }
 
+#define DRM_EXP_BASE 0x1100
+#define DRM_EXP_MAX 8
+static struct {
+    int used;
+    uint32_t handle;
+} drm_exp[DRM_EXP_MAX];
+
+void drm_exp_close(int fd) {
+    int i = fd - DRM_EXP_BASE;
+    if (i >= 0 && i < DRM_EXP_MAX) {
+        drm_exp[i].used = 0;
+    }
+}
+
 static int32_t drm_ioctl_version(struct drm_version *v) {
     v->version_major = 1;
     v->version_minor = 1;
@@ -296,6 +314,9 @@ static int32_t drm_ioctl_get_cap(struct drm_get_cap *c) {
         return 0;
     case DRM_CAP_ASYNC_PAGE_FLIP:
         c->value = 0;
+        return 0;
+    case DRM_CAP_PRIME:
+        c->value = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
         return 0;
     case DRM_CAP_CURSOR_WIDTH:
     case DRM_CAP_CURSOR_HEIGHT:
@@ -449,6 +470,36 @@ static int32_t drm_ioctl_add_fb(struct drm_mode_fb_cmd *f) {
     return 0;
 }
 
+static struct drm_gem *drm_addfb2_validate(const struct drm_mode_fb_cmd2 *f) {
+    int fmt_ok = f->pixel_format == 0x34325258u || f->pixel_format == 0x34324258u;
+    int mod_ok = f->modifier[0] == 0 || f->modifier[0] == 1 ||
+                   f->modifier[0] == 0x00ffffffffffffffull;
+    if (!fmt_ok || !mod_ok) {
+        return NULL;
+    }
+    struct drm_gem *gem = drm_gem_by_handle(f->handles[0]);
+    if (gem == NULL || f->width != gem->w || f->height != gem->h) {
+        return NULL;
+    }
+    if (f->pitches[0] < gem->w * 4 || f->offsets[0] != 0 || f->handles[1] != 0) {
+        return NULL;
+    }
+    return gem;
+}
+
+static int32_t drm_ioctl_add_fb2(struct drm_mode_fb_cmd2 *f) {
+    struct drm_gem *gem = drm_addfb2_validate(f);
+    if (gem == NULL) {
+        return -22;
+    }
+    struct drm_fb *fb = drm_fb_new(gem);
+    if (fb == NULL) {
+        return -12;
+    }
+    f->fb_id = fb->id;
+    return 0;
+}
+
 static int32_t drm_ioctl_rm_fb(uint32_t *id) {
     struct drm_fb *fb = drm_fb_by_id(*id);
     if (fb == NULL) {
@@ -576,11 +627,13 @@ static int32_t drm_ioctl_get_plane(struct drm_mode_get_plane *p) {
     return 0;
 }
 
-static const struct {
+#define DRM_PROPS_COUNT 13
+struct drm_prop_entry {
     uint32_t id;
     const char *name;
     uint32_t flags;
-} drm_props[] = {
+};
+static const struct drm_prop_entry drm_props[] = {
     {DRM_PROP_CRTC_ID, "CRTC_ID", DRM_MODE_PROP_OBJECT | DRM_MODE_PROP_ATOMIC},
     {DRM_PROP_FB_ID, "FB_ID", DRM_MODE_PROP_OBJECT | DRM_MODE_PROP_ATOMIC},
     {DRM_PROP_SRC_X, "SRC_X", DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC},
@@ -591,10 +644,86 @@ static const struct {
     {DRM_PROP_CRTC_Y, "CRTC_Y", DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC},
     {DRM_PROP_CRTC_W, "CRTC_W", DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC},
     {DRM_PROP_CRTC_H, "CRTC_H", DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC},
+    {DRM_PROP_TYPE, "type", DRM_MODE_PROP_ENUM},
+    {DRM_PROP_ACTIVE, "ACTIVE", DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC},
+    {DRM_PROP_MODE_ID, "MODE_ID", DRM_MODE_PROP_OBJECT | DRM_MODE_PROP_ATOMIC},
 };
 
+#define DRM_BLOB_MAX 8
+struct drm_blob {
+    uint32_t id;
+    uint32_t len;
+    uint8_t *data;
+};
+static struct drm_blob drm_blobs[DRM_BLOB_MAX];
+static uint32_t drm_blob_next = 1;
+
+static int32_t drm_ioctl_create_blob(struct drm_mode_create_blob *c) {
+    if (c->length == 0 || c->length > 4096 || c->data == 0) {
+        return -22;
+    }
+    for (uint32_t i = 0; i < DRM_BLOB_MAX; i++) {
+        if (drm_blobs[i].id != 0) {
+            continue;
+        }
+        uint8_t *buf = kmalloc(c->length);
+        if (buf == NULL) {
+            return -12;
+        }
+        if (copy_from_user(buf, (const void *)(uintptr_t)c->data, c->length) != 0) {
+            kfree(buf);
+            return -22;
+        }
+        drm_blobs[i].id = drm_blob_next;
+        drm_blobs[i].len = c->length;
+        drm_blobs[i].data = buf;
+        c->blob_id = drm_blob_next++;
+        return 0;
+    }
+    return -12;
+}
+
+static struct drm_blob *drm_blob_by_id(uint32_t id);
+static int32_t drm_ioctl_destroy_blob(struct drm_mode_destroy_blob *d) {
+    struct drm_blob *b = drm_blob_by_id(d->blob_id);
+    if (b == NULL) {
+        return -2;
+    }
+    kfree(b->data);
+    b->id = 0;
+    b->len = 0;
+    b->data = NULL;
+    return 0;
+}
+
+static struct drm_blob *drm_blob_by_id(uint32_t id) {
+    if (id == 0) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < DRM_BLOB_MAX; i++) {
+        if (drm_blobs[i].id == id) {
+            return &drm_blobs[i];
+        }
+    }
+    return NULL;
+}
+
+static int32_t drm_ioctl_get_blob(struct drm_mode_get_blob *g) {
+    struct drm_blob *b = drm_blob_by_id(g->blob_id);
+    if (b == NULL) {
+        return -2;
+    }
+    uint32_t n = g->length < b->len ? g->length : b->len;
+    if (n != 0 && g->data != 0 &&
+        copy_to_user((void *)(uintptr_t)g->data, b->data, n) != 0) {
+        return -22;
+    }
+    g->length = b->len;
+    return 0;
+}
+
 static int32_t drm_ioctl_get_property(struct drm_mode_get_property *p) {
-    for (uint32_t i = 0; i < sizeof(drm_props) / sizeof(drm_props[0]); i++) {
+    for (uint32_t i = 0; i < DRM_PROPS_COUNT; i++) {
         if (drm_props[i].id == p->prop_id) {
             p->flags = drm_props[i].flags;
             memset(p->name, 0, sizeof(p->name));
@@ -625,27 +754,114 @@ static uint32_t drm_prop_value(uint32_t prop) {
     case DRM_PROP_SRC_H:
     case DRM_PROP_CRTC_H:
         return fb ? fb->gem->h : drm_h;
+    case DRM_PROP_TYPE:
+        return 1;
+    case DRM_PROP_ACTIVE:
+        return 1;
+    case DRM_PROP_MODE_ID:
+        return 0;
     default:
         return 0;
     }
 }
 
-static int32_t drm_ioctl_obj_get_properties(struct drm_mode_obj_get_properties *o) {
-    uint32_t count = 0;
-    if (o->obj_id == DRM_OBJ_PLANE || o->obj_id == DRM_OBJ_CONNECTOR) {
-        count = (o->obj_id == DRM_OBJ_PLANE)
-                    ? (uint32_t)(sizeof(drm_props) / sizeof(drm_props[0]))
-                    : 1;
+static uint32_t drm_obj_prop_count(uint32_t obj_id) {
+    if (obj_id == DRM_OBJ_PLANE) {
+        return DRM_PROPS_COUNT;
     }
+    if (obj_id == DRM_OBJ_CONNECTOR) {
+        return 1;
+    }
+    if (obj_id == DRM_OBJ_CRTC) {
+        return 2;
+    }
+    return 0;
+}
+
+static uint32_t drm_obj_prop_id(uint32_t obj_id, uint32_t index) {
+    if (obj_id == DRM_OBJ_PLANE) {
+        return drm_props[index].id;
+    }
+    if (obj_id == DRM_OBJ_CONNECTOR) {
+        return DRM_PROP_CRTC_ID;
+    }
+    return (index == 0) ? DRM_PROP_ACTIVE : DRM_PROP_MODE_ID;
+}
+
+static int32_t drm_ioctl_obj_get_properties(struct drm_mode_obj_get_properties *o) {
+    uint32_t count = drm_obj_prop_count(o->obj_id);
     if (o->count_props >= count && o->props_ptr != 0 && o->prop_values_ptr != 0 && count) {
         for (uint32_t i = 0; i < count; i++) {
-            uint32_t prop = (o->obj_id == DRM_OBJ_PLANE) ? drm_props[i].id : DRM_PROP_CRTC_ID;
+            uint32_t prop = drm_obj_prop_id(o->obj_id, i);
             ((uint32_t *)(uintptr_t)o->props_ptr)[i] = prop;
             ((uint64_t *)(uintptr_t)o->prop_values_ptr)[i] = drm_prop_value(prop);
         }
     }
     o->count_props = count;
     return 0;
+}
+
+struct drm_atomic_vals {
+    uint32_t fb_val;
+    uint32_t crtc_val;
+    uint64_t src_x;
+    uint64_t src_y;
+    uint64_t src_w;
+    uint64_t src_h;
+    uint64_t crtc_x;
+    uint64_t crtc_y;
+    uint64_t crtc_w;
+    uint64_t crtc_h;
+};
+
+static void drm_atomic_store(struct drm_atomic_vals *v, uint32_t prop, uint64_t value);
+static void drm_atomic_parse(const struct drm_mode_atomic *a, const uint32_t *objs,
+                             const uint32_t *counts, const uint32_t *props,
+                             const uint64_t *values, struct drm_atomic_vals *v) {
+    uint32_t prop_idx = 0;
+    for (uint32_t o = 0; o < a->count_objs; o++) {
+        for (uint32_t k = 0; k < counts[o]; k++) {
+            uint64_t value = values[prop_idx];
+            drm_atomic_store(v, props[prop_idx++], value);
+        }
+    }
+}
+
+static void drm_atomic_store(struct drm_atomic_vals *v, uint32_t prop, uint64_t value) {
+    switch (prop) {
+    case DRM_PROP_FB_ID:
+        v->fb_val = (uint32_t)value;
+        break;
+    case DRM_PROP_CRTC_ID:
+        v->crtc_val = (uint32_t)value;
+        break;
+    case DRM_PROP_SRC_X:
+        v->src_x = value;
+        break;
+    case DRM_PROP_SRC_Y:
+        v->src_y = value;
+        break;
+    case DRM_PROP_SRC_W:
+        v->src_w = value;
+        break;
+    case DRM_PROP_SRC_H:
+        v->src_h = value;
+        break;
+    case DRM_PROP_CRTC_X:
+        v->crtc_x = value;
+        break;
+    case DRM_PROP_CRTC_Y:
+        v->crtc_y = value;
+        break;
+    case DRM_PROP_CRTC_W:
+        v->crtc_w = value;
+        break;
+    case DRM_PROP_CRTC_H:
+        v->crtc_h = value;
+        break;
+    default:
+        break;
+    }
 }
 
 static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
@@ -666,50 +882,18 @@ static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
     uint64_t crtc_w = 0;
     uint64_t crtc_h = 0;
 
-    for (uint32_t o = 0; o < a->count_objs; o++) {
-        for (uint32_t k = 0; k < counts[o]; k++) {
-            uint32_t prop = props[prop_idx];
-            uint64_t value = values[prop_idx];
-            prop_idx++;
-            if (objs[o] == DRM_OBJ_PLANE) {
-                switch (prop) {
-                case DRM_PROP_FB_ID:
-                    fb_val = (uint32_t)value;
-                    break;
-                case DRM_PROP_CRTC_ID:
-                    crtc_val = (uint32_t)value;
-                    break;
-                case DRM_PROP_SRC_X:
-                    src_x = value;
-                    break;
-                case DRM_PROP_SRC_Y:
-                    src_y = value;
-                    break;
-                case DRM_PROP_SRC_W:
-                    src_w = value;
-                    break;
-                case DRM_PROP_SRC_H:
-                    src_h = value;
-                    break;
-                case DRM_PROP_CRTC_X:
-                    crtc_x = value;
-                    break;
-                case DRM_PROP_CRTC_Y:
-                    crtc_y = value;
-                    break;
-                case DRM_PROP_CRTC_W:
-                    crtc_w = value;
-                    break;
-                case DRM_PROP_CRTC_H:
-                    crtc_h = value;
-                    break;
-                default:
-                    break;
-                }
-            }
-        }
-    }
-
+    struct drm_atomic_vals vals = {0};
+    drm_atomic_parse(a, objs, counts, props, values, &vals);
+    fb_val = vals.fb_val;
+    crtc_val = vals.crtc_val;
+    src_x = vals.src_x;
+    src_y = vals.src_y;
+    src_w = vals.src_w;
+    src_h = vals.src_h;
+    crtc_x = vals.crtc_x;
+    crtc_y = vals.crtc_y;
+    crtc_w = vals.crtc_w;
+    crtc_h = vals.crtc_h;
     if (fb_val == 0) {
         return (a->flags & DRM_MODE_ATOMIC_TEST_ONLY) ? 0 : 0;
     }
@@ -771,6 +955,43 @@ static int32_t drm_ioctl_drop_master(struct drm_client *c) {
     return 0;
 }
 
+static int32_t drm_prime_handle_to_fd(struct drm_prime_handle *ph) {
+    for (int i = 0; i < DRM_EXP_MAX; i++) {
+        if (drm_exp[i].used) {
+            continue;
+        }
+        drm_exp[i].used = 1;
+        drm_exp[i].handle = ph->handle;
+        ph->fd = DRM_EXP_BASE + i;
+        return 0;
+    }
+    return -12;
+}
+
+static int32_t drm_prime_fd_to_handle(struct drm_prime_handle *ph) {
+    int i = ph->fd - DRM_EXP_BASE;
+    if (i < 0 || i >= DRM_EXP_MAX || !drm_exp[i].used) {
+        return -22;
+    }
+    ph->handle = drm_exp[i].handle;
+    return 0;
+}
+
+static int32_t drm_ioctl_prime_blob(uint32_t cmd, void *p) {
+    switch (cmd) {
+    case DRM_IOCTL_PRIME_HANDLE_TO_FD:
+        return drm_prime_handle_to_fd((struct drm_prime_handle *)p);
+    case DRM_IOCTL_PRIME_FD_TO_HANDLE:
+        return drm_prime_fd_to_handle((struct drm_prime_handle *)p);
+    case DRM_IOCTL_MODE_CREATEPROPBLOB:
+        return drm_ioctl_create_blob((struct drm_mode_create_blob *)p);
+    case DRM_IOCTL_MODE_DESTROYPROPBLOB:
+        return drm_ioctl_destroy_blob((struct drm_mode_destroy_blob *)p);
+    default:
+        return drm_ioctl_get_blob((struct drm_mode_get_blob *)p);
+    }
+}
+
 static int32_t drm_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
     void *p = (void *)(uintptr_t)arg;
 
@@ -823,6 +1044,9 @@ static int32_t drm_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
     case DRM_IOCTL_MODE_GETFB:
         rc = drm_ioctl_get_fb((struct drm_mode_fb_cmd *)p);
         break;
+    case DRM_IOCTL_MODE_ADDFB2:
+        rc = drm_ioctl_add_fb2((struct drm_mode_fb_cmd2 *)p);
+        break;
     case DRM_IOCTL_MODE_ADDFB:
         rc = drm_ioctl_add_fb((struct drm_mode_fb_cmd *)p);
         break;
@@ -850,6 +1074,15 @@ static int32_t drm_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
     case DRM_IOCTL_MODE_OBJ_GETPROPERTIES:
         rc = drm_ioctl_obj_get_properties((struct drm_mode_obj_get_properties *)p);
         break;
+    case DRM_IOCTL_PRIME_HANDLE_TO_FD:
+    case DRM_IOCTL_PRIME_FD_TO_HANDLE:
+    case DRM_IOCTL_MODE_CREATEPROPBLOB:
+    case DRM_IOCTL_MODE_DESTROYPROPBLOB:
+    case DRM_IOCTL_MODE_GETPROPBLOB:
+        rc = drm_ioctl_prime_blob(cmd, p);
+        break;
+    case DRM_IOCTL_MODE_CREATE_LEASE:
+        return -22;
     case DRM_IOCTL_MODE_ATOMIC:
         rc = drm_atomic_commit(file, (struct drm_mode_atomic *)p);
         break;

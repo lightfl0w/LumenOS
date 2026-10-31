@@ -321,3 +321,35 @@ void devfs_close(struct FILE *file) {
         ops->release(file);
     }
 }
+
+int devfs_lookup_mm(uint32_t major, uint32_t minor, uint32_t *node_id) {
+    for (uint32_t i = 0; i < devfs_node_count; i++) {
+        const struct DEVFS_NODE *n = &devfs_nodes[i];
+        if (n->used && !n->is_dir && n->major == major && n->minor == minor) {
+            *node_id = i + 1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+const char *devfs_node_path(uint32_t node_id) {
+    if (node_id == 0 || node_id > devfs_node_count) {
+        return NULL;
+    }
+    return devfs_nodes[node_id - 1].path;
+}
+
+uint32_t devfs_node_major(uint32_t node_id) {
+    if (node_id == 0 || node_id > devfs_node_count) {
+        return 0;
+    }
+    return devfs_nodes[node_id - 1].major;
+}
+
+uint32_t devfs_node_minor(uint32_t node_id) {
+    if (node_id == 0 || node_id > devfs_node_count) {
+        return 0;
+    }
+    return devfs_nodes[node_id - 1].minor;
+}

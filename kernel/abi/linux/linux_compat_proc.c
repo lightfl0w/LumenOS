@@ -13,6 +13,7 @@
 #include "fs/vfs/vfs.h"
 #include "kernel/abi/linux/lc_internal.h"
 #include "kernel/abi/linux/linux_compat.h"
+#include "kernel/ipc/unix_sock.h"
 #include "arch/asm_func.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/sched/thread.h"
@@ -684,7 +685,11 @@ int64_t lc_execve(LC_ARGS) {
     return sys_execve(kpath, (const char **)(uintptr_t)b, (const char **)(uintptr_t)c, r);
 }
 int64_t lc_fork(LC_ARGS) {
-    return sys_fork(r);
+    int64_t pid = sys_fork(r);
+    if (pid > 0) {
+        unix_fds_dup((int32_t)current->pid, (int32_t)pid);
+    }
+    return pid;
 }
 int64_t lc_clone(LC_ARGS) {
     uint32_t flags = (uint32_t)a;
@@ -699,6 +704,9 @@ int64_t lc_clone(LC_ARGS) {
         return tpid;
     }
     int64_t pid = (int64_t)sys_clone_ex(flags & ~(uint32_t)CLONE_VM, (uint32_t)b, (uint32_t)e, r);
+    if (pid > 0) {
+        unix_fds_dup((int32_t)current->pid, (int32_t)pid);
+    }
     if (pid > 0 && (flags & CLONE_PARENT_SETTID) != 0 && c != 0) {
         if (user_ptr_ok(r, c, 4, 1))
             *(volatile int32_t *)(uintptr_t)c = (int32_t)pid;

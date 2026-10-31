@@ -782,7 +782,8 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                 MUSL_DEMO_CFLAGS + ["-D__linux__",
                                      "-I", str(BUILD_DIR / "pixman" / "include"),
                                      "-I", str(BUILD_DIR / "libdrm" / "include"),
-                                     "-I", str(BUILD_DIR / "libdrm" / "include" / "drm")])
+                                     "-I", str(BUILD_DIR / "libdrm" / "include" / "drm"),
+                                     "-I", str(BUILD_DIR / "linux-include")])
             drm_test_c.optional = True
             drm_test_c.group = "musl"
             drm_test_c.deps = drm_test_c.deps + [BUILD_DIR / "pixman" / "lib" / "libpixman-1.a",
@@ -804,6 +805,77 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                 optional=True, group="musl",
                 description="link drmtest.elf (pixman + libdrm)")
             tasks.append(drm_test_link)
+            seat_probe_c = task_cc(
+                "test_seatprobe.o", TESTS / "probes" / "seatprobe.c",
+                BUILD_DIR / "seatprobe.o", tools,
+                MUSL_DEMO_CFLAGS + ["-D__linux__",
+                                    "-I", str(BUILD_DIR / "seatd" / "include" / "libseat"),
+                                    "-I", str(BUILD_DIR / "libdrm" / "include"),
+                                    "-I", str(BUILD_DIR / "libdrm" / "include" / "drm"),
+                                    "-I", str(BUILD_DIR / "linux-include")])
+            seat_probe_c.optional = True
+            seat_probe_c.group = "musl"
+            seat_probe_c.deps = seat_probe_c.deps + [
+                BUILD_DIR / "seatd" / "lib" / "libseat.a",
+                BUILD_DIR / "libdrm" / "lib" / "libdrm.a"]
+            tasks.append(seat_probe_c)
+            seat_probe_link = Task(
+                name="test_seatprobe.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "seatprobe.o"), str(MUSL_LIB / "crtn.o"),
+                     str(BUILD_DIR / "seatd" / "lib" / "libseat.a"),
+                     str(BUILD_DIR / "libdrm" / "lib" / "libdrm.a"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "seatprobe.elf")],
+                out=BUILD_DIR / "seatprobe.elf",
+                deps=[BUILD_DIR / "seatd" / "lib" / "libseat.a",
+                      BUILD_DIR / "libdrm" / "lib" / "libdrm.a"],
+                optional=True, group="musl",
+                description="link seatprobe.elf (real libseat + embedded seatd)")
+            tasks.append(seat_probe_link)
+            user_elves.append(seat_probe_link)
+            wl_test_c = task_cc(
+                "test_wltest.o", TESTS / "probes" / "wltest.c",
+                BUILD_DIR / "wltest.o", tools,
+                MUSL_DEMO_CFLAGS + ["-D__linux__", "-DWLR_USE_UNSTABLE",
+                                    "-I", str(BUILD_DIR / "wlroots" / "include"),
+                                    "-I", str(BUILD_DIR / "pixman" / "include"),
+                                    "-I", str(BUILD_DIR / "wayland-gen"),
+                                    "-I", str(ROOT / "third_party" / "wayland" / "src"),
+                                    "-I", str(BUILD_DIR / "libdrm" / "include"),
+                                    "-I", str(BUILD_DIR / "libdrm" / "include" / "drm"),
+                                    "-I", str(BUILD_DIR / "linux-include")])
+            wl_test_c.optional = True
+            wl_test_c.group = "musl"
+            wl_test_c.deps = wl_test_c.deps + [
+                BUILD_DIR / "wlroots" / "lib" / "libwlroots.a"]
+            tasks.append(wl_test_c)
+            wl_test_link = Task(
+                name="test_wltest.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "wltest.o"), str(MUSL_LIB / "crtn.o"),
+                     str(BUILD_DIR / "wlroots" / "lib" / "libwlroots.a"),
+                     str(BUILD_DIR / "wayland" / "libwayland-server.a"),
+                     str(BUILD_DIR / "wayland" / "libwayland-client.a"),
+                     str(BUILD_DIR / "xkbcommon" / "lib" / "libxkbcommon.a"),
+                     str(BUILD_DIR / "seatd" / "lib" / "libseat.a"),
+                     str(BUILD_DIR / "libudev" / "lib" / "libudev.a"),
+                     str(BUILD_DIR / "libdrm" / "lib" / "libdrm.a"),
+                     str(BUILD_DIR / "pixman" / "lib" / "libpixman-1.a"),
+                     str(BUILD_DIR / "ffi" / "lib" / "libffi.a"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "-lm", "--end-group",
+                     "-o", str(BUILD_DIR / "wltest.elf")],
+                out=BUILD_DIR / "wltest.elf",
+                deps=[BUILD_DIR / "wlroots" / "lib" / "libwlroots.a",
+                      BUILD_DIR / "seatd" / "lib" / "libseat.a"],
+                optional=True, group="musl",
+                description="link wltest.elf (wlroots + pixman + drm one-frame)")
+            tasks.append(wl_test_link)
+            user_elves.append(wl_test_link)
             user_elves.append(drm_test_link)
         sh_c = task_cc("musl_sh.o", USER_DIR / "apps" / "sh.c", BUILD_DIR / "sh.o",
                        tools, MUSL_DEMO_CFLAGS)
@@ -1041,8 +1113,17 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             optional=True, group="musl-lib",
             description="build static pixman against musl"))
 
+        _lnx_inc = BUILD_DIR / "linux-include"
+        _lnx_setup = (
+            f'[ -d {shlex.quote(str(_lnx_inc / "linux"))} ] || '
+            f'{{ mkdir -p {shlex.quote(str(_lnx_inc))} && '
+            f'cp -rL /usr/include/linux {shlex.quote(str(_lnx_inc / "linux"))} && '
+            f'cp -rL /usr/include/asm {shlex.quote(str(_lnx_inc / "asm"))} && '
+            f'cp -rL /usr/include/asm-generic {shlex.quote(str(_lnx_inc / "asm-generic"))} && '
+            f'cp -rL /usr/include/mtd {shlex.quote(str(_lnx_inc / "mtd"))}; }}; '
+        )
         libdrm_script = (
-            "set -e; " + _musl_pick +
+            "set -e; " + _musl_pick + _lnx_setup +
             f"DS={shlex.quote(str(libdrm_src))}; "
             f"DB={shlex.quote(str(libdrm_prefix))}; "
             'mkdir -p "$DB/obj" "$DB/lib" "$DB/include/drm"; '
@@ -1050,8 +1131,9 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             'python3 gen_table_fourcc.py include/drm/drm_fourcc.h '
             '"$DB/obj/generated_static_table_fourcc.h"; '
             "for f in xf86drm xf86drmHash xf86drmRandom xf86drmSL xf86drmMode; "
-            'do "$MC" -c $f.c -o "$DB/obj/$f.o" -O2 -fPIC -std=gnu17 '
+            'do "$MC" -c $f.c -o "$DB/obj/$f.o" -O2 -fPIC -std=gnu17 -D__linux__ '
             "-include sys/sysmacros.h -I. -Iinclude/drm "
+            f"-I{shlex.quote(str(_lnx_inc))} "
             f"-I{shlex.quote(str(MUSL_INC))} "
             '-I"$DB/obj"; done; '
             'llvm-ar rcs "$DB/lib/libdrm.a" "$DB"/obj/xf86drm*.o; '
@@ -1067,6 +1149,260 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             deps=[MUSL_LIB / "libc.a"],
             optional=True, group="musl-lib",
             description="build static libdrm against musl"))
+
+        xkb_src = ROOT / "third_party" / "libxkbcommon"
+        xkb_prefix = BUILD_DIR / "xkbcommon"
+        xkb_config = (
+            "cat > \"$XB/include/config.h\" <<'EOF'\n"
+            "#define HAVE_UNISTD_H 1\n"
+            "#define HAVE___BUILTIN_EXPECT 1\n"
+            "#define HAVE_MMAP 1\n"
+            "#define HAVE_MKOSTEMP 1\n"
+            "#define HAVE_POSIX_FALLOCATE 1\n"
+            "#define HAVE_STRNDUP 1\n"
+            "#define HAVE_ASPRINTF 1\n"
+            "#define HAVE_VASPRINTF 1\n"
+            "#define DFLT_XKB_CONFIG_EXTRA_PATH \"\"\n"
+            "#define DFLT_XKB_CONFIG_ROOT \"/usr/share/X11/xkb\"\n"
+            "#define DEFAULT_XKB_RULES \"evdev\"\n"
+            "#define DEFAULT_XKB_MODEL \"pc105\"\n"
+            "#define DEFAULT_XKB_LAYOUT \"us\"\n"
+            "#define DEFAULT_XKB_VARIANT NULL\n"
+            "#define DEFAULT_XKB_OPTIONS NULL\n"
+            "#define XLOCALEDIR \"/usr/share/X11/locale\"\n"
+            "EOF\n"
+        )
+        xkb_srcs = (
+            "src/atom src/context src/context-priv src/keysym src/keysym-utf "
+            "src/keymap src/keymap-priv src/state src/text src/utf8 src/utils "
+            "src/util-list src/compose/parser src/compose/paths src/compose/state "
+            "src/compose/table src/xkbcomp/action src/xkbcomp/ast-build "
+            "src/xkbcomp/compat src/xkbcomp/expr src/xkbcomp/include "
+            "src/xkbcomp/keycodes src/xkbcomp/keymap src/xkbcomp/keymap-dump "
+            "src/xkbcomp/keywords src/xkbcomp/rules src/xkbcomp/scanner "
+            "src/xkbcomp/symbols src/xkbcomp/types src/xkbcomp/vmod src/xkbcomp/xkbcomp"
+        )
+        xkb_script = (
+            "set -e; " + _musl_pick +
+            "command -v bison >/dev/null 2>&1 || exit 0; "
+            f"XS={shlex.quote(str(xkb_src))}; "
+            f"XB={shlex.quote(str(xkb_prefix))}; "
+            'mkdir -p "$XB/obj" "$XB/lib" "$XB/include/xkbcommon"; '
+            'CRI=$("$MC" -print-resource-dir 2>/dev/null)/include; '
+            + xkb_config +
+            'CFLAGS="-O2 -fPIC -std=gnu17 -DHAVE_CONFIG_H -Wno-unused-parameter '
+            '-Wno-deprecated-declarations"; '
+            f'INCS="-I$XB/include -I$XB/obj -I$XS -I$XS/src '
+            f'-I$XS/include {shlex.quote(str(MUSL_INC))} -isystem $CRI"; '
+            'cd "$XS"; bison --defines="$XB/obj/parser.h" -o "$XB/obj/parser.c" '
+            '-p _xkbcommon_ src/xkbcomp/parser.y; '
+            '"$MC" $CFLAGS $INCS -c "$XB/obj/parser.c" -o "$XB/obj/gen-parser.o"; '
+            f'for f in {xkb_srcs}; do '
+            '"$MC" $CFLAGS $INCS -c "$f.c" '
+            '-o "$XB/obj/$(echo $f | tr / _).o" '
+            '|| { echo "xkbcommon: FAIL $f"; exit 1; }; done; '
+            'llvm-ar rcs "$XB/lib/libxkbcommon.a" "$XB"/obj/*.o; '
+            'cp include/xkbcommon/*.h "$XB/include/xkbcommon/"'
+        )
+        tasks.append(Task(
+            name="xkbcommon-static-lib",
+            cmd=[sh, "-c", xkb_script],
+            out=xkb_prefix / "lib" / "libxkbcommon.a",
+            deps=[MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static libxkbcommon against musl"))
+
+        seatd_src = ROOT / "third_party" / "seatd"
+        seatd_prefix = BUILD_DIR / "seatd"
+        _lnx_inc = BUILD_DIR / "linux-include"
+        _lnx_setup = (
+            f'[ -d {shlex.quote(str(_lnx_inc / "linux"))} ] || '
+            f'{{ mkdir -p {shlex.quote(str(_lnx_inc))} && '
+            f'cp -rL /usr/include/linux {shlex.quote(str(_lnx_inc / "linux"))} && '
+            f'cp -rL /usr/include/asm {shlex.quote(str(_lnx_inc / "asm"))} && '
+            f'cp -rL /usr/include/asm-generic {shlex.quote(str(_lnx_inc / "asm-generic"))} && '
+            f'cp -rL /usr/include/mtd {shlex.quote(str(_lnx_inc / "mtd"))}; }}; '
+        )
+        seatd_srcs = (
+            "libseat/libseat libseat/backend/seatd libseat/backend/noop "
+            "common/connection common/linked_list common/log common/terminal "
+            "common/evdev common/drm common/wscons seatd/poller seatd/seat seatd/client seatd/server"
+        )
+        seatd_script = (
+            "set -e; " + _musl_pick +
+            f"SS={shlex.quote(str(seatd_src))}; "
+            f"SB={shlex.quote(str(seatd_prefix))}; "
+            'mkdir -p "$SB/obj" "$SB/lib" "$SB/include/libseat"; '
+            'CRI=$("$MC" -print-resource-dir 2>/dev/null)/include; '
+            + _lnx_setup +
+            'CFLAGS=\'-O2 -fPIC -std=gnu17 -Uunix -DLIBSEAT=1 -DSEATD_ENABLED=1 '
+            '-DBUILTIN_ENABLED=1 -DSEATD_DEFAULTPATH="/run/seatd.sock" '
+            '-DREL_SRC_DIR="" -Wno-unused-parameter -Wno-unused-function\'; '
+            f'INCS="-I$SS -I$SS/include '
+            f'-I{shlex.quote(str(_lnx_inc))} {shlex.quote(str(MUSL_INC))} '
+            '-isystem $CRI"; '
+            f'for f in {seatd_srcs}; do '
+            '"$MC" $CFLAGS $INCS -c "$SS/$f.c" '
+            '-o "$SB/obj/$(echo $f | tr / _).o" '
+            '|| { echo "libseat: FAIL $f"; exit 1; }; done; '
+            'llvm-ar rcs "$SB/lib/libseat.a" "$SB"/obj/*.o; '
+            'cp "$SS/include/libseat.h" "$SB/include/libseat/"'
+        )
+        tasks.append(Task(
+            name="libseat-static-lib",
+            cmd=[sh, "-c", seatd_script],
+            out=seatd_prefix / "lib" / "libseat.a",
+            deps=[MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static libseat 0.8.0 (seatd+builtin, no logind)"))
+
+        eudev_src = ROOT / "third_party" / "eudev"
+        udev_prefix = BUILD_DIR / "libudev"
+        udev_script = (
+            "set -e; " + _musl_pick + _lnx_setup +
+            f"ES={shlex.quote(str(eudev_src))}; "
+            f"EB={shlex.quote(str(udev_prefix))}; "
+            'mkdir -p "$EB/build" "$EB/lib" "$EB/include"; '
+            f'cd "$EB/build" && CC="$MC" '
+            f'CPPFLAGS="-I{shlex.quote(str(_lnx_inc))}" '
+            f'"{eudev_src}/configure" --prefix="$EB/prefix" '
+            "--disable-programs --disable-blkid --disable-selinux "
+            "--disable-manpages --disable-kmod --disable-shared --enable-static "
+            "--disable-rule-generator --disable-hwdb >/dev/null; "
+            'make -j"$(nproc 2>/dev/null || echo 4)" >/dev/null; '
+            'make install >/dev/null; '
+            'cp "$EB"/prefix/lib/libudev.a "$EB/lib/"; '
+            'cp "$EB"/prefix/include/libudev.h "$EB/include/"'
+        )
+        tasks.append(Task(
+            name="libudev-static-lib",
+            cmd=[sh, "-c", udev_script],
+            out=udev_prefix / "lib" / "libudev.a",
+            deps=[MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static libudev (eudev 3.2.14) against musl"))
+
+        wlroots_src = ROOT / "third_party" / "wlroots"
+        wl_protocols = ROOT / "third_party" / "wayland-protocols"
+        ldi_src = ROOT / "third_party" / "libdisplay-info"
+        xkb_src = ROOT / "third_party" / "libxkbcommon"
+        wlroots_prefix = BUILD_DIR / "wlroots"
+        wlroots_cflags = (
+            "-O2 -fPIC -std=gnu17 -D__linux__ -DWLR_USE_UNSTABLE "
+            "-Wno-unused-parameter -Wno-unused-function "
+            "-Wno-implicit-fallthrough -Wno-deprecated-declarations "
+            "-Wno-format-truncation -Wno-sign-compare")
+        wlroots_incs = (
+            f'-I"$WS/include" -I"$WB/include" -I"$WB/include/protocol" '
+            f"-I{shlex.quote(str(ROOT / 'third_party' / 'wayland' / 'src'))} "
+            f"-I{shlex.quote(str(ROOT / 'third_party' / 'wayland'))} "
+            f"-I{shlex.quote(str(BUILD_DIR / 'wayland-gen'))} "
+            f"-I{shlex.quote(str(libdrm_prefix / 'include'))} "
+            f"-I{shlex.quote(str(libdrm_prefix / 'include' / 'drm'))} "
+            f"-I{shlex.quote(str(_lnx_inc))} "
+            f"-I{shlex.quote(str(pixman_prefix / 'include'))} "
+            f"-I{shlex.quote(str(xkb_prefix / 'include'))} "
+            f"-I{shlex.quote(str(seatd_prefix / 'include'))} "
+            f"-I{shlex.quote(str(seatd_prefix / 'include' / 'libseat'))} "
+            f"-I{shlex.quote(str(udev_prefix / 'include'))} "
+            f"-I{shlex.quote(str(ldi_src / 'include'))} "
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '-isystem "$($MC -print-resource-dir)/include"'
+        )
+        wlroots_config = (
+            "cat > \"$WB/include/wlr/config.h\" <<'EOF'\n"
+            "#ifndef WLR_CONFIG_H\n#define WLR_CONFIG_H\n"
+            "#define WLR_HAS_DRM_BACKEND 1\n"
+            "#define WLR_HAS_LIBINPUT_BACKEND 0\n"
+            "#define WLR_HAS_X11_BACKEND 0\n"
+            "#define WLR_HAS_GLES2_RENDERER 0\n"
+            "#define WLR_HAS_VULKAN_RENDERER 0\n"
+            "#define WLR_HAS_GBM_ALLOCATOR 0\n"
+            "#define WLR_HAS_XWAYLAND 0\n"
+            "#define WLR_HAS_SESSION 1\n"
+            "#endif\nEOF\n"
+            "cat > \"$WB/include/wlr/version.h\" <<'EOF'\n"
+            "#ifndef WLR_VERSION_H\n#define WLR_VERSION_H\n"
+            "#define WLR_VERSION_STR \"0.17.4\"\n"
+            "#define WLR_VERSION_MAJOR 0\n"
+            "#define WLR_VERSION_MINOR 17\n"
+            "#define WLR_VERSION_MICRO 4\n"
+            "#define WLR_VERSION_NUM ((WLR_VERSION_MAJOR << 16) | "
+            "(WLR_VERSION_MINOR << 8) | WLR_VERSION_MICRO)\n"
+            "#endif\nEOF\n"
+        )
+        wlroots_scan = (
+            '_scan() { '
+            'wayland-scanner server-header < "$1" > '
+            '"$WB/include/protocol/$2-protocol.h"; '
+            'wayland-scanner client-header < "$1" > '
+            '"$WB/include/protocol/$2-client-protocol.h"; '
+            'wayland-scanner private-code < "$1" > "$WB/obj/proto-$2.c"; }; '
+            'for x in "$WS"/protocol/*.xml; do _scan "$x" "$(basename "${x%.xml}")"; done; '
+            'find "$WP"/stable "$WP"/unstable "$WP"/staging -name "*.xml" | '
+            'while read -r x; do b=$(basename "${x%.xml}"); '
+            'case "$b" in tablet-v2) b=tablet-unstable-v2 ;; '
+            'linux-dmabuf-v1) b=linux-dmabuf-unstable-v1 ;; esac; _scan "$x" "$b"; done; '
+            '(cd "$WS" && echo -n "" | sh backend/drm/gen_pnpids.sh > "$WB/obj/pnpids.c"); '
+        )
+        wlroots_ldi = (
+            f'cd {shlex.quote(str(ldi_src))}; '
+            'python3 tool/gen-search-table.py /usr/share/hwdata/pnp.ids '
+            '"$WB/obj/ldi-pnp-id-table.c" pnp_id_table; '
+            '"$MC" ' + wlroots_cflags + ' -c "$WB/obj/ldi-pnp-id-table.c" '
+            '-o "$WB/obj/ldi-pnp-id-table.o" -I. -Iinclude '
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '-isystem "$($MC -print-resource-dir)/include"; '
+            'for f in *.c; do f=${f%.c}; '
+            '"$MC" ' + wlroots_cflags + ' -c "$f.c" -o "$WB/obj/ldi-$f.o" '
+            '-I. -Iinclude '
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '-isystem "$($MC -print-resource-dir)/include"; done; '
+        )
+        wlroots_compile = (
+            f'cd {shlex.quote(str(wlroots_src))}; '
+            'FILES=$(ls backend/*.c backend/multi/*.c backend/headless/*.c '
+            'backend/wayland/*.c backend/session/*.c backend/drm/*.c '
+            '| grep -v backend/drm/libliftoff.c); '
+            'FILES="$FILES $(ls render/*.c | grep -vE "egl.c|dmabuf_linux.c")"; '
+            'FILES="$FILES render/pixman/*.c"; '
+            'FILES="$FILES $(ls render/allocator/*.c | grep -vE "gbm.c|dmabuf.c")"; '
+            'FILES="$FILES util/*.c xcursor/*.c types/*.c"; '
+            'for d in types/*/; do FILES="$FILES $d"*.c; done; '
+            'for f in $FILES; do '
+            'o="$WB/obj/$(echo "$f" | tr "/" "_")"; o="${o%.c}.o"; '
+            '"$MC" ' + wlroots_cflags + ' ' + wlroots_incs + ' -c "$f" -o "$o" '
+            '|| { echo "wlroots: FAIL $f"; exit 1; }; done; '
+            '"$MC" ' + wlroots_cflags + ' -I"$WS" ' + wlroots_incs +
+            ' -c "$WB/obj/pnpids.c" -o "$WB/obj/pnpids.o"; '
+            'for p in "$WB"/obj/proto-*.c; do '
+            '"$MC" ' + wlroots_cflags + ' ' + wlroots_incs +
+            ' -c "$p" -o "${p%.c}.o" || { echo "wlroots: FAIL $p"; exit 1; }; done; '
+            'llvm-ar rcs "$WB/lib/libwlroots.a" "$WB"/obj/*.o; '
+            'cp -r include/wlr "$WB/include/"'
+        )
+        wlroots_script = (
+            "set -e; " + _musl_pick +
+            "command -v wayland-scanner >/dev/null 2>&1 || exit 0; "
+            f"WS={shlex.quote(str(wlroots_src))}; "
+            f"WP={shlex.quote(str(wl_protocols))}; "
+            f"WB={shlex.quote(str(wlroots_prefix))}; "
+            'mkdir -p "$WB/obj" "$WB/lib" "$WB/include/wlr" "$WB/include/protocol"; '
+            + wlroots_config + wlroots_scan + wlroots_ldi +
+            wlroots_compile
+        )
+        tasks.append(Task(
+            name="wlroots-static-lib",
+            cmd=[sh, "-c", wlroots_script],
+            out=wlroots_prefix / "lib" / "libwlroots.a",
+            deps=[pixman_prefix / "lib" / "libpixman-1.a",
+                  libdrm_prefix / "lib" / "libdrm.a",
+                  xkb_prefix / "lib" / "libxkbcommon.a",
+                  seatd_prefix / "lib" / "libseat.a",
+                  udev_prefix / "lib" / "libudev.a",
+                  MUSL_LIB / "libc.a"],
+            optional=True, group="musl-lib",
+            description="build static wlroots 0.17.4 (pixman+drm+real session stack)"))
 
         if (PCRE2_SRC / "configure").exists():
             pcre2_script = (

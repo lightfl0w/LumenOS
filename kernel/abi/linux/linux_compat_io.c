@@ -1,4 +1,5 @@
 #include "arch/interrupt/interrupt.h"
+#include "arch/x86_64/percpu.h"
 #include "drivers/char/serial/console/io.h"
 #include "drivers/char/serial/ioqueue.h"
 #include "drivers/char/serial/pty.h"
@@ -37,14 +38,69 @@
 
 #define UNIX_MAX_IOV 16384
 
+
+#define NL_FD_BASE 0x1000
+#define NL_FD_MAX 8
+struct NL_SOCK {
+    int used;
+    int nonblock;
+    uint32_t pid;
+    uint32_t groups;
+};
+static struct NL_SOCK u_nl[NL_FD_MAX];
+
+static int nl_put(uint64_t addr, const void *src, uint32_t len) {
+    if (copy_to_user((void *)(uintptr_t)addr, src, len) != 0) {
+        return -LINUX_EFAULT;
+    }
+    return 0;
+}
+
+static int nl_sockname_fill(int nslot, uint64_t ub) {
+    uint16_t family = 16;
+    uint16_t pad = 0;
+    if (nl_put(ub, &family, sizeof(family)) != 0) {
+        return -LINUX_EFAULT;
+    }
+    if (nl_put(ub + 2, &pad, sizeof(pad)) != 0) {
+        return -LINUX_EFAULT;
+    }
+    if (nl_put(ub + 4, &u_nl[nslot].pid, sizeof(uint32_t)) != 0) {
+        return -LINUX_EFAULT;
+    }
+    return nl_put(ub + 8, &u_nl[nslot].groups, sizeof(uint32_t));
+}
+
+int nl_slot(int fd) {
+    int i = fd - NL_FD_BASE;
+    return (i >= 0 && i < NL_FD_MAX && u_nl[i].used) ? i : -1;
+}
+
+static int64_t nl_sock_create(int64_t proto) {
+    (void)proto;
+    for (int i = 0; i < NL_FD_MAX; i++) {
+        if (!u_nl[i].used) {
+            memset(&u_nl[i], 0, sizeof(u_nl[i]));
+            u_nl[i].used = 1;
+            return NL_FD_BASE + i;
+        }
+    }
+    return -LINUX_ENFILE;
+}
+
 int64_t lc_socket(LC_ARGS) {
     int domain = (int)a;
     int type = (int)b;
+    if (domain == 16) {
+        return nl_sock_create((int64_t)c);
+    }
     if (domain == 1) {
         int i = unix_socket_create(type);
         if (i < 0)
             return -LINUX_ENFILE;
-        return UNIX_FD_BASE + i;
+        uint64_t fd = UNIX_FD_BASE + (uint64_t)i;
+        unix_fd_acquire((int32_t)current->pid, fd);
+        return fd;
     }
     if (domain != 2)
         return -LINUX_EAFNOSUPPORT;
@@ -154,6 +210,25 @@ int64_t lc_connect(LC_ARGS) {
     return net_connect((int)a, ip, port);
 }
 int64_t lc_bind(LC_ARGS) {
+    int nslot = nl_slot((int)a);
+    if (nslot >= 0) {
+        uint16_t family = 0;
+        if (b == 0) {
+            return -LINUX_EFAULT;
+        }
+        if (copy_from_user(&family, (const void *)(uintptr_t)b, sizeof(family)) != 0) {
+            return -LINUX_EFAULT;
+        }
+        if (family != 16)
+            return -LINUX_EINVAL;
+        uint32_t groups = 0;
+        if (c >= 12 &&
+            copy_from_user(&groups, (const void *)(uintptr_t)(b + 8), sizeof(groups)) == 0) {
+            u_nl[nslot].groups = groups;
+        }
+        u_nl[nslot].pid = (uint32_t)(1000 + nslot);
+        return 0;
+    }
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
         char path[96];
@@ -233,6 +308,12 @@ int64_t lc_recvfrom(LC_ARGS) {
     return n;
 }
 int64_t lc_getsockname(LC_ARGS) {
+    int nslot = nl_slot((int)a);
+    if (nslot >= 0) {
+        if (b == 0 || c < 12)
+            return -LINUX_EFAULT;
+        return nl_sockname_fill(nslot, b);
+    }
     if (unix_fd_slot(a) >= 0)
         return -LINUX_EINVAL;
     uint32_t ip = 0;
@@ -255,6 +336,8 @@ int64_t lc_getpeername(LC_ARGS) {
     return 0;
 }
 int64_t lc_setsockopt(LC_ARGS) {
+    if (nl_slot((int)a) >= 0)
+        return 0;
     if (unix_fd_slot(a) >= 0)
         return 0;
 
@@ -267,6 +350,15 @@ int64_t lc_getsockopt(LC_ARGS) {
     uint32_t kval = 0;
     if (e != 0 && copy_from_user(&klen, (const void *)(uintptr_t)e, sizeof(klen)) != 0)
         return -LINUX_EFAULT;
+    if (nl_slot((int)a) >= 0) {
+        if (d != 0) {
+            if (klen < 4)
+                return -LINUX_EINVAL;
+            if (copy_to_user((void *)(uintptr_t)d, &kval, sizeof(kval)) != 0)
+                return -LINUX_EFAULT;
+        }
+        return 0;
+    }
     if (unix_fd_slot(a) >= 0) {
         if (d != 0) {
             if (klen < 4)
@@ -320,6 +412,7 @@ static int unix_cmsg_fds(struct ARCH_REGS *r, uint64_t ctrl, uint64_t ctrllen, i
 }
 
 int64_t lc_sendmsg(LC_ARGS) {
+    int64_t rc64;
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
         if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 0))
@@ -371,63 +464,74 @@ int64_t lc_sendmsg(LC_ARGS) {
         memcpy(sbuf + total, (const void *)(uintptr_t)iv.iov_base, n);
         total += n;
     }
-    if (have_addr)
-        return net_sendto((int)a, sbuf, total, ip, port);
-    return net_send((int)a, sbuf, total);
+    if (have_addr) {
+        rc64 = net_sendto((int)a, sbuf, total, ip, port);
+        return rc64;
+    }
+    rc64 = net_send((int)a, sbuf, total);
+    return rc64;
 }
+static void unix_fill_scm(struct LINUX_MSGHDR *mh, const int *gfds, int nfds) {
+    if (nfds <= 0 || mh->ctrl == 0 || mh->ctrllen < 16 + 4u * (uint32_t)nfds) {
+        mh->ctrllen = 0;
+        return;
+    }
+    uint64_t caddr = mh->ctrl;
+    uint64_t clen = 16 + 4u * (uint32_t)nfds;
+    memset((void *)(uintptr_t)caddr, 0, (size_t)clen);
+    memcpy((void *)(uintptr_t)caddr, &clen, 8);
+    int32_t level = 1;
+    int32_t type = 1;
+    memcpy((void *)(uintptr_t)(caddr + 8), &level, 4);
+    memcpy((void *)(uintptr_t)(caddr + 12), &type, 4);
+    for (int i = 0; i < nfds; i++) {
+        int lfd = fd_install_from((uint32_t)gfds[i], 3);
+        if (lfd < 0) {
+            if (file_table_unref((uint32_t)gfds[i]) == 0)
+                file_table_free_slot((uint32_t)gfds[i]);
+            continue;
+        }
+        memcpy((void *)(uintptr_t)(caddr + 16 + 4u * i), &lfd, 4);
+    }
+    mh->ctrllen = clen;
+}
+
+static int64_t unix_recvmsg(struct ARCH_REGS *r, uint64_t ub, int uslot) {
+    if (!user_ptr_ok(r, ub, sizeof(struct LINUX_MSGHDR), 1))
+        return -LINUX_EFAULT;
+    struct LINUX_MSGHDR mh;
+    memcpy(&mh, (const void *)(uintptr_t)ub, sizeof mh);
+    uint8_t rbuf[UNIX_MAX_IOV];
+    int gfds[28];
+    int nfds = 0;
+    int32_t n = unix_recv_data(uslot, rbuf, sizeof(rbuf), gfds, &nfds);
+    if (n < 0)
+        return n;
+    uint32_t copied = 0;
+    if (mh.iov != 0 && mh.iovlen > 0) {
+        uint64_t ent = mh.iov;
+        if (!user_ptr_ok(r, ent, sizeof(struct LINUX_IOVEC), 1))
+            return -LINUX_EFAULT;
+        struct LINUX_IOVEC iv;
+        memcpy(&iv, (const void *)(uintptr_t)ent, sizeof iv);
+        uint32_t n2 = iv.iov_len > (uint64_t)(uint32_t)n ? (uint32_t)n : (uint32_t)iv.iov_len;
+        if (n2 != 0) {
+            if (!user_ptr_ok(r, (uint64_t)iv.iov_base, n2, 1))
+                return -LINUX_EFAULT;
+            memcpy((void *)(uintptr_t)iv.iov_base, rbuf, n2);
+        }
+        copied = n2;
+    }
+    unix_fill_scm(&mh, gfds, nfds);
+    mh.flags = 0;
+    memcpy((void *)(uintptr_t)ub, &mh, sizeof mh);
+    return (int64_t)copied;
+}
+
 int64_t lc_recvmsg(LC_ARGS) {
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
-        if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 1))
-            return -LINUX_EFAULT;
-        struct LINUX_MSGHDR mh;
-        memcpy(&mh, (const void *)(uintptr_t)b, sizeof mh);
-        uint8_t rbuf[UNIX_MAX_IOV];
-        int gfds[28];
-        int nfds = 0;
-        int32_t n = unix_recv_data(uslot, rbuf, sizeof(rbuf), gfds, &nfds);
-        if (n < 0)
-            return n;
-        uint32_t copied = 0;
-        if (mh.iov != 0 && mh.iovlen > 0) {
-            uint64_t ent = mh.iov;
-            if (!user_ptr_ok(r, ent, sizeof(struct LINUX_IOVEC), 1))
-                return -LINUX_EFAULT;
-            struct LINUX_IOVEC iv;
-            memcpy(&iv, (const void *)(uintptr_t)ent, sizeof iv);
-            uint32_t n2 = iv.iov_len > (uint64_t)(uint32_t)n ? (uint32_t)n : (uint32_t)iv.iov_len;
-            if (n2 != 0) {
-                if (!user_ptr_ok(r, (uint64_t)iv.iov_base, n2, 1))
-                    return -LINUX_EFAULT;
-                memcpy((void *)(uintptr_t)iv.iov_base, rbuf, n2);
-            }
-            copied = n2;
-        }
-        if (nfds > 0 && mh.ctrl != 0 && mh.ctrllen >= 16 + 4u * (uint32_t)nfds) {
-            uint64_t caddr = mh.ctrl;
-            uint64_t clen = 16 + 4u * (uint32_t)nfds;
-            memset((void *)(uintptr_t)caddr, 0, (size_t)clen);
-            memcpy((void *)(uintptr_t)caddr, &clen, 8);
-            int32_t level = 1;
-            int32_t type = 1;
-            memcpy((void *)(uintptr_t)(caddr + 8), &level, 4);
-            memcpy((void *)(uintptr_t)(caddr + 12), &type, 4);
-            for (int i = 0; i < nfds; i++) {
-                int lfd = fd_install_from((uint32_t)gfds[i], 3);
-                if (lfd < 0) {
-                    if (file_table_unref((uint32_t)gfds[i]) == 0)
-                        file_table_free_slot((uint32_t)gfds[i]);
-                    continue;
-                }
-                memcpy((void *)(uintptr_t)(caddr + 16 + 4u * i), &lfd, 4);
-            }
-            mh.ctrllen = clen;
-        } else {
-            mh.ctrllen = 0;
-        }
-        mh.flags = 0;
-        memcpy((void *)(uintptr_t)b, &mh, sizeof mh);
-        return (int64_t)copied;
+        return unix_recvmsg(r, b, uslot);
     }
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 1))
         return -LINUX_EFAULT;
@@ -481,6 +585,9 @@ int64_t lc_socketpair(LC_ARGS) {
     int32_t out[2];
     if (unix_socketpair((int)b, out) != 0)
         return -LINUX_ENFILE;
+    int32_t pid = (int32_t)current->pid;
+    unix_fd_acquire(pid, (uint64_t)(uint32_t)out[0]);
+    unix_fd_acquire(pid, (uint64_t)(uint32_t)out[1]);
     memcpy((void *)(uintptr_t)d, out, sizeof(out));
     return 0;
 }
@@ -546,8 +653,16 @@ int tfd_expired(int i) {
         return 0;
     return lc_now_ms() >= u_tfd[i].next_ms;
 }
+void drm_exp_close(int fd);
+
 int lc_close_extra(int32_t fd) {
-    int i = evfd_slot(fd);
+    drm_exp_close(fd);
+    int i = nl_slot(fd);
+    if (i >= 0) {
+        u_nl[i].used = 0;
+        return 1;
+    }
+    i = evfd_slot(fd);
     if (i >= 0) {
         u_evfd[i].active = 0;
         return 1;
@@ -602,6 +717,10 @@ int io_fd_events(int fd, int want_read, int want_write) {
     i = ep_slot(fd);
     if (i >= 0)
         return rv;
+    i = nl_slot(fd);
+    if (i >= 0) {
+        return 0;
+    }
     i = unix_fd_slot((uint64_t)fd);
     if (i >= 0) {
         uint32_t ev = unix_events(i);
