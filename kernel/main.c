@@ -34,8 +34,8 @@
 #include "lib/string/str.h"
 #include "user/libc/syscall.h"
 
-extern const uint8_t _binary__root_LumenOS_logo_png_start[];
-extern const uint8_t _binary__root_LumenOS_logo_png_end[];
+extern const uint8_t _binary____logo_png_start[];
+extern const uint8_t _binary____logo_png_end[];
 
 static void show_boot_logo(void) {
     const struct BOOT_INFO *bi = boot_info();
@@ -43,9 +43,9 @@ static void show_boot_logo(void) {
     int fw = (int)fb->width;
     int fh = (int)fb->height;
 
-    const uint8_t *logo_data = _binary__root_LumenOS_logo_png_start;
-    uint32_t logo_len = (uint32_t)(_binary__root_LumenOS_logo_png_end
-                                 - _binary__root_LumenOS_logo_png_start);
+    const uint8_t *logo_data = _binary____logo_png_start;
+    uint32_t logo_len = (uint32_t)(_binary____logo_png_end
+                                 - _binary____logo_png_start);
 
     struct PNG_IMAGE logo_img;
     memset(&logo_img, 0, sizeof(logo_img));

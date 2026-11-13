@@ -500,7 +500,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             name="logo_kernel.o",
             cmd=[tools.objcopy, "-I", "binary", "-O", "elf64-x86-64",
                  "-B", "i386:x86-64", "--set-section-alignment", ".data=64",
-                 str(ROOT / "logo.png"), "logo_kernel.o"],
+                 "../logo.png", "logo_kernel.o"],
             cwd=BUILD_DIR, out=BUILD_DIR / "logo_kernel.o", deps=[],
             description="embed logo.png", group="objcopy",
         ))
@@ -589,6 +589,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             f"include/alltypes.h.in > obj/include/bits/alltypes.h; "
             f"CC={shlex.quote(cc_str)} "
             f"./configure --prefix={shlex.quote(str(MUSL_PREFIX))} "
+            f"--syslibdir=/tmp "
             f"--enable-shared --enable-static --disable-option-checking; "
             f"make -j\"$(nproc 2>/dev/null || echo 4)\" "
             f"2>&1 | tee {shlex.quote(str(MUSL_PREFIX / 'build.log'))}; "
@@ -609,6 +610,9 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         _musl_pick = (
             f"MC={shlex.quote(str(_musl_clang))}; "
             f"[ -x \"$MC\" ] || MC={shlex.quote(str(_musl_gcc))}; ")
+        _musl_run = (
+            f"ln -sfn {shlex.quote(str(MUSL_LIB / 'libc.so'))} "
+            "/tmp/ld-musl-x86_64.so.1; ")
         _busybox_pre = (f"test -x {shlex.quote(str(_musl_gcc))} || "
                         f"test -x {shlex.quote(str(_musl_clang))} || exit 0; " +
                         _musl_pick)
@@ -952,7 +956,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         wl_build = BUILD_DIR / "wayland"
         linux_inc = BUILD_DIR / "linux-include"
         ffi_script = (
-            "set -e; " + _musl_pick +
+            "set -e; " + _musl_run + _musl_pick +
             f"mkdir -p {shlex.quote(str(MUSL_INC / 'linux'))} "
             f"{shlex.quote(str(MUSL_INC / 'asm'))} "
             f"{shlex.quote(str(MUSL_INC / 'asm-generic'))}; "
@@ -1007,10 +1011,16 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         wl_gen = BUILD_DIR / "wayland-gen"
         wl_xml = wl_src / "protocol" / "wayland.xml"
         wl_script = (
-            "set -e; "
+            "set -e; " + _musl_run + _musl_pick +
             f"mkdir -p {shlex.quote(str(wl_build))} {shlex.quote(str(wl_gen))}; "
             f"printf '#define HAVE_MEMFD_CREATE 1\\n#define HAVE_ACCEPT4 1\\n' "
             f"> {shlex.quote(str(wl_src / 'config.h'))}; "
+            f"sed -e 's/@WAYLAND_VERSION_MAJOR@/1/g' "
+            f"-e 's/@WAYLAND_VERSION_MINOR@/22/g' "
+            f"-e 's/@WAYLAND_VERSION_MICRO@/0/g' "
+            f"-e 's/@WAYLAND_VERSION@/1.22.0/g' "
+            f"{shlex.quote(str(wl_src / 'src' / 'wayland-version.h.in'))} "
+            f"> {shlex.quote(str(wl_gen / 'wayland-version.h'))}; "
             "command -v wayland-scanner >/dev/null 2>&1 || exit 0; "
             f"wayland-scanner private-code < {shlex.quote(str(wl_xml))} "
             f"> {shlex.quote(str(wl_gen / 'wayland-protocol.c'))}; "
@@ -1018,7 +1028,6 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             f"> {shlex.quote(str(wl_gen / 'wayland-client-protocol.h'))}; "
             f"wayland-scanner server-header < {shlex.quote(str(wl_xml))} "
             f"> {shlex.quote(str(wl_gen / 'wayland-server-protocol.h'))}; "
-            f"MC={shlex.quote(str(_musl_clang))}; "
             '[ -x "$MC" ] || exit 0; '
             f"WIF={shlex.quote(str(ffi_prefix / 'include'))}; "
             "for f in wayland-util connection wayland-os wayland-client "
@@ -1027,11 +1036,13 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             f"-o {shlex.quote(str(wl_build))}/$f.o -O2 -fPIC -std=gnu17 "
             f"-I{shlex.quote(str(wl_src / 'src'))} -I{shlex.quote(str(wl_src))} "
             f"-I{shlex.quote(str(wl_gen))} -I$WIF "
-            f"-I{shlex.quote(str(MUSL_INC))} 2>/dev/null; done; "
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '|| { echo "wayland: FAIL $f"; exit 1; }; done; '
             f'"$MC" -c {shlex.quote(str(wl_gen / "wayland-protocol.c"))} '
             f"-o {shlex.quote(str(wl_build))}/wayland-protocol.o -O2 -fPIC -std=gnu17 "
             f"-I{shlex.quote(str(wl_src / 'src'))} -I{shlex.quote(str(wl_gen))} "
-            f"-I{shlex.quote(str(MUSL_INC))} 2>/dev/null; "
+            f"-I{shlex.quote(str(MUSL_INC))} "
+            '|| { echo "wayland: FAIL wayland-protocol.c"; exit 1; }; '
             f"cd {shlex.quote(str(wl_build))}; "
             "llvm-ar rcs libwayland-client.a wayland-util.o wayland-os.o "
             "connection.o wayland-protocol.o wayland-client.o; "
@@ -1084,7 +1095,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             'pixman/pixman-version.h.in > "$PB/obj/pixman-version.h"; '
         )
         pixman_script = (
-            "set -e; " + _musl_pick +
+            "set -e; " + _musl_run + _musl_pick +
             f"PS={shlex.quote(str(pixman_src))}; "
             f"PB={shlex.quote(str(pixman_prefix))}; "
             'mkdir -p "$PB/obj" "$PB/lib" "$PB/include"; '
@@ -1123,7 +1134,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             f'cp -rL /usr/include/mtd {shlex.quote(str(_lnx_inc / "mtd"))}; }}; '
         )
         libdrm_script = (
-            "set -e; " + _musl_pick + _lnx_setup +
+            "set -e; " + _musl_run + _musl_pick + _lnx_setup +
             f"DS={shlex.quote(str(libdrm_src))}; "
             f"DB={shlex.quote(str(libdrm_prefix))}; "
             'mkdir -p "$DB/obj" "$DB/lib" "$DB/include/drm"; '
@@ -1183,7 +1194,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             "src/xkbcomp/symbols src/xkbcomp/types src/xkbcomp/vmod src/xkbcomp/xkbcomp"
         )
         xkb_script = (
-            "set -e; " + _musl_pick +
+            "set -e; " + _musl_run + _musl_pick +
             "command -v bison >/dev/null 2>&1 || exit 0; "
             f"XS={shlex.quote(str(xkb_src))}; "
             f"XB={shlex.quote(str(xkb_prefix))}; "
@@ -1229,7 +1240,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             "common/evdev common/drm common/wscons seatd/poller seatd/seat seatd/client seatd/server"
         )
         seatd_script = (
-            "set -e; " + _musl_pick +
+            "set -e; " + _musl_run + _musl_pick +
             f"SS={shlex.quote(str(seatd_src))}; "
             f"SB={shlex.quote(str(seatd_prefix))}; "
             'mkdir -p "$SB/obj" "$SB/lib" "$SB/include/libseat"; '
@@ -1259,17 +1270,20 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         eudev_src = ROOT / "third_party" / "eudev"
         udev_prefix = BUILD_DIR / "libudev"
         udev_script = (
-            "set -e; " + _musl_pick + _lnx_setup +
+            "set -e; " + _musl_run + _musl_pick + _lnx_setup +
             f"ES={shlex.quote(str(eudev_src))}; "
             f"EB={shlex.quote(str(udev_prefix))}; "
             'mkdir -p "$EB/build" "$EB/lib" "$EB/include"; '
+            'test -x "$ES/configure" || (cd "$ES" && autoreconf -f -i >/dev/null 2>&1); '
+            'test -x "$ES/configure" || { echo "libudev: eudev configure missing"; exit 1; }; '
             f'cd "$EB/build" && CC="$MC" '
             f'CPPFLAGS="-I{shlex.quote(str(_lnx_inc))}" '
             f'"{eudev_src}/configure" --prefix="$EB/prefix" '
             "--disable-programs --disable-blkid --disable-selinux "
             "--disable-manpages --disable-kmod --disable-shared --enable-static "
             "--disable-rule-generator --disable-hwdb >/dev/null; "
-            'make -j"$(nproc 2>/dev/null || echo 4)" >/dev/null; '
+            'make -j"$(nproc 2>/dev/null || echo 4)" > "$EB/build.log" 2>&1 '
+            '|| { tail -40 "$EB/build.log"; exit 1; }; '
             'make install >/dev/null; '
             'cp "$EB"/prefix/lib/libudev.a "$EB/lib/"; '
             'cp "$EB"/prefix/include/libudev.h "$EB/include/"'
@@ -1280,9 +1294,24 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             out=udev_prefix / "lib" / "libudev.a",
             deps=[MUSL_LIB / "libc.a"],
             optional=True, group="musl-lib",
-            description="build static libudev (eudev 3.2.14) against musl"))
+            description="build static libudev (eudev 3.3.0) against musl"))
 
         wlroots_src = ROOT / "third_party" / "wlroots"
+        wlroots_src_pinned = BUILD_DIR / "src" / "wlroots-0.17.4"
+        wlroots_src_export = (
+            f"rm -rf {shlex.quote(str(wlroots_src_pinned))}; "
+            f"mkdir -p {shlex.quote(str(BUILD_DIR / 'src'))}; "
+            f"git -C {shlex.quote(str(wlroots_src))} archive 0.17.4 | "
+            f"tar -x -C {shlex.quote(str(BUILD_DIR / 'src'))} "
+            "--one-top-level=wlroots-0.17.4"
+        )
+        tasks.append(Task(
+            name="wlroots-source-pinned",
+            cmd=[sh, "-c", wlroots_src_export],
+            out=wlroots_src_pinned / "meson.build",
+            deps=[wlroots_src / ".git"],
+            optional=True, group="musl-lib",
+            description="export pinned wlroots 0.17.4 source"))
         wl_protocols = ROOT / "third_party" / "wayland-protocols"
         ldi_src = ROOT / "third_party" / "libdisplay-info"
         xkb_src = ROOT / "third_party" / "libxkbcommon"
@@ -1294,6 +1323,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             "-Wno-format-truncation -Wno-sign-compare")
         wlroots_incs = (
             f'-I"$WS/include" -I"$WB/include" -I"$WB/include/protocol" '
+            f'-I"$WS" '
             f"-I{shlex.quote(str(ROOT / 'third_party' / 'wayland' / 'src'))} "
             f"-I{shlex.quote(str(ROOT / 'third_party' / 'wayland'))} "
             f"-I{shlex.quote(str(BUILD_DIR / 'wayland-gen'))} "
@@ -1340,6 +1370,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             'wayland-scanner private-code < "$1" > "$WB/obj/proto-$2.c"; }; '
             'for x in "$WS"/protocol/*.xml; do _scan "$x" "$(basename "${x%.xml}")"; done; '
             'find "$WP"/stable "$WP"/unstable "$WP"/staging -name "*.xml" | '
+            'grep -vE "xdg-shell-unstable-v5.xml|xdg-shell-unstable-v6.xml" | '
             'while read -r x; do b=$(basename "${x%.xml}"); '
             'case "$b" in tablet-v2) b=tablet-unstable-v2 ;; '
             'linux-dmabuf-v1) b=linux-dmabuf-unstable-v1 ;; esac; _scan "$x" "$b"; done; '
@@ -1360,7 +1391,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             '-isystem "$($MC -print-resource-dir)/include"; done; '
         )
         wlroots_compile = (
-            f'cd {shlex.quote(str(wlroots_src))}; '
+            f'cd {shlex.quote(str(wlroots_src_pinned))}; '
             'FILES=$(ls backend/*.c backend/multi/*.c backend/headless/*.c '
             'backend/wayland/*.c backend/session/*.c backend/drm/*.c '
             '| grep -v backend/drm/libliftoff.c); '
@@ -1379,12 +1410,13 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             '"$MC" ' + wlroots_cflags + ' ' + wlroots_incs +
             ' -c "$p" -o "${p%.c}.o" || { echo "wlroots: FAIL $p"; exit 1; }; done; '
             'llvm-ar rcs "$WB/lib/libwlroots.a" "$WB"/obj/*.o; '
+            'rm -rf "$WB/include/wlr"; '
             'cp -r include/wlr "$WB/include/"'
         )
         wlroots_script = (
-            "set -e; " + _musl_pick +
+            "set -e; " + _musl_run + _musl_pick +
             "command -v wayland-scanner >/dev/null 2>&1 || exit 0; "
-            f"WS={shlex.quote(str(wlroots_src))}; "
+            f"WS={shlex.quote(str(wlroots_src_pinned))}; "
             f"WP={shlex.quote(str(wl_protocols))}; "
             f"WB={shlex.quote(str(wlroots_prefix))}; "
             'mkdir -p "$WB/obj" "$WB/lib" "$WB/include/wlr" "$WB/include/protocol"; '
@@ -1395,8 +1427,10 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             name="wlroots-static-lib",
             cmd=[sh, "-c", wlroots_script],
             out=wlroots_prefix / "lib" / "libwlroots.a",
-            deps=[pixman_prefix / "lib" / "libpixman-1.a",
+            deps=[wlroots_src_pinned / "meson.build",
+                  pixman_prefix / "lib" / "libpixman-1.a",
                   libdrm_prefix / "lib" / "libdrm.a",
+                  wl_build / "libwayland-server.a",
                   xkb_prefix / "lib" / "libxkbcommon.a",
                   seatd_prefix / "lib" / "libseat.a",
                   udev_prefix / "lib" / "libudev.a",
@@ -1406,7 +1440,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
 
         if (PCRE2_SRC / "configure").exists():
             pcre2_script = (
-                "set -e; "
+            "set -e; " + _musl_run +
                 f"cd {shlex.quote(str(PCRE2_SRC))}; " +
                 _musl_pick +
                 "rm -f config.status; "
@@ -1556,6 +1590,10 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
     if CONFIG.get("CONFIG_UEFI") == "y" and uefi_enabled:
         test_hd_task.deps.append(uefi_esp)
     test_hd_task.deps.extend(user_elves)
+    for elf_name in ("drmtest.elf", "seatprobe.elf", "wltest.elf"):
+        elf_path = BUILD_DIR / elf_name
+        if elf_path.exists():
+            test_hd_task.deps.append(elf_path)
     test_hd_task.description = "make_ext4.py → test_hd.img (+nvme.img)"
     test_hd_task.group = "image"
     tasks.append(test_hd_task)
@@ -1596,8 +1634,12 @@ def execute_plan(plan: BuildPlan, tools: Tools, console: Console,
             raise
         if not res.ok:
             if task.optional:
+                phase = ("native musl" if task.group == "musl-lib"
+                         else task.group or task.name)
                 console.warn(f"{task.name} 跳过 (exit {res.returncode}, "
-                             f"原生 musl 不可用不影响其它构建)")
+                             f"{phase} 依赖不可用)")
+                for line in (res.stderr or res.stdout).splitlines()[-8:]:
+                    console.writeln(f"          {line}")
                 return
             stats.failed += 1
             console.fail(f"{task.name} (exit {res.returncode})")
