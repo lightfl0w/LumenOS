@@ -1043,8 +1043,30 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             app_elf = link_musl_user("musl_" + stem + ".elf",
                                      BUILD_DIR / (stem + ".elf"), [cobj])
             tasks.append(app_elf)
-        rustc = Path("/opt/cargo/bin/rustc")
-        if rustc.exists():
+        def _find_cargo_tool(name):
+            for cand in (os.environ.get("CARGO_HOME"),
+                         "/opt/cargo",
+                         str(Path.home() / ".cargo")):
+                if cand:
+                    tool = Path(cand) / "bin" / name
+                    if tool.exists():
+                        return tool
+            found = shutil.which(name)
+            return Path(found) if found else None
+
+        def _find_rustup_home():
+            for cand in (os.environ.get("RUSTUP_HOME"), str(Path.home() / ".rustup")):
+                if cand and Path(cand).exists():
+                    return cand
+            return ""
+
+        cargo_home = os.environ.get("CARGO_HOME") or ""
+        if not cargo_home:
+            _c = _find_cargo_tool("cargo")
+            cargo_home = str(_c.parent.parent) if _c else ""
+        rustup_home = _find_rustup_home()
+        rustc = _find_cargo_tool("rustc")
+        if rustc is not None:
             for stem in ("rust_hello", "rust_probe", "rust_probe2"):
                 rs = TESTS / "probes" / (stem + ".rs")
                 if not rs.exists():
@@ -1057,11 +1079,11 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                          "-O", "-C", "panic=abort", "-C", "debuginfo=0",
                          "-o", str(BUILD_DIR / (stem + ".elf")), str(rs)],
                     out=BUILD_DIR / (stem + ".elf"),
-                    env={"CARGO_HOME": "/opt/cargo", "RUSTUP_HOME": "/opt/rustup"},
+                    env={"CARGO_HOME": cargo_home, "RUSTUP_HOME": rustup_home},
                     optional=True, group="musl",
                     description="rustc " + stem))
-            cargo = Path("/opt/cargo/bin/cargo")
-            if (FISH_CARGO_TOML.exists() and cargo.exists()
+            cargo = _find_cargo_tool("cargo")
+            if (FISH_CARGO_TOML.exists() and cargo is not None
                     and CONFIG.get("CONFIG_FISH") == "y"):
                 fish_script = (
                     "set -e; "
@@ -1076,7 +1098,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                     cmd=[sh, "-c", fish_script],
                     out=BUILD_DIR / "fish.elf",
                     deps=[FISH_CARGO_TOML],
-                    env={"CARGO_HOME": "/opt/cargo", "RUSTUP_HOME": "/opt/rustup",
+                    env={"CARGO_HOME": cargo_home, "RUSTUP_HOME": rustup_home,
                          "CARGO_TARGET_DIR": str(FISH_TARGET),
                          ARCH["cargo_cc_var"]: str(_musl_clang)},
                     optional=True, group="musl",
