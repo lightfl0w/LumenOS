@@ -91,6 +91,7 @@ pid_t sys_clone_ex(uint32_t flags, uint32_t child_user_stack, uint32_t tls, stru
         if (copy_user_space(parent, child) != 0) {
             goto clone_fail;
         }
+        shmem_fork_space(parent->pml4_phys, child->pml4_phys);
     }
 
     if (child_user_stack == 0) {

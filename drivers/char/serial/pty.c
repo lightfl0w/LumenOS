@@ -1,6 +1,7 @@
 #include "drivers/char/serial/pty.h"
 
 #include "arch/cpu.h"
+#include "fs/chardev.h"
 #include "fs/file.h"
 #include "kernel/sched/thread.h"
 #include "kernel/signal.h"
@@ -127,6 +128,22 @@ int32_t pty_chardev_read(struct FILE *f, void *buf, uint32_t count) {
     }
 }
 
+static int pty_put_byte(struct FILE *f, struct TTY_IOQUEUE *q, char ch,
+                        uint32_t *fl) {
+    while (ioq_full(q)) {
+        cpu_set_eflags(*fl);
+        if (f->fd_nonblock) {
+            current->errno = PTY_EAGAIN;
+            return -1;
+        }
+        mtime_sleep(1);
+        *fl = cpu_eflags();
+        cpu_cli();
+    }
+    ioq_putchar(q, ch);
+    return 0;
+}
+
 int32_t pty_chardev_write(struct FILE *f, const void *buf, uint32_t count) {
     if (!f->dev_priv)
         return (int32_t)count;
@@ -137,17 +154,21 @@ int32_t pty_chardev_write(struct FILE *f, const void *buf, uint32_t count) {
     uint32_t fl = cpu_eflags();
     cpu_cli();
     for (uint32_t i = 0; i < count; i++) {
-        while (ioq_full(q)) {
-            cpu_set_eflags(fl);
-            if (f->fd_nonblock) {
-                current->errno = PTY_EAGAIN;
+        char out = (char)b[i];
+        if (r->is_master && (uint8_t)out == '\r')
+            out = '\n';
+        if (!r->is_master && out == '\n') {
+            if (pty_put_byte(f, q, '\r', &fl) != 0)
                 return -1;
-            }
-            mtime_sleep(1);
-            fl = cpu_eflags();
-            cpu_cli();
         }
-        ioq_putchar(q, (char)b[i]);
+        if (pty_put_byte(f, q, out, &fl) != 0)
+            return -1;
+        if (r->is_master) {
+            if (out == '\n' && !ioq_full(&p->s2m))
+                ioq_putchar(&p->s2m, '\r');
+            if (!ioq_full(&p->s2m))
+                ioq_putchar(&p->s2m, out);
+        }
     }
     cpu_set_eflags(fl);
     return (int32_t)count;
@@ -159,10 +180,12 @@ int pty_chardev_ioctl(struct FILE *f, uint32_t cmd, uint64_t arg) {
     struct PTY *p = ((struct PTY_REF *)f->dev_priv)->p;
     switch (cmd) {
     case PTY_TIOCGPTN:
+    case PTY_TIOCGPTN_LEGACY:
         if (arg)
             *(uint32_t *)(uintptr_t)arg = (uint32_t)p->id;
         return 0;
     case PTY_TIOCSPTLCK:
+    case PTY_TIOCSPTLCK_LEGACY:
         if (arg)
             p->master_locked = *(const uint32_t *)(uintptr_t)arg ? 1 : 0;
         return 0;
@@ -193,6 +216,24 @@ int pty_chardev_ioctl(struct FILE *f, uint32_t cmd, uint64_t arg) {
     default:
         return 0;
     }
+}
+
+uint32_t pty_chardev_poll(struct FILE *f) {
+    if (!f->dev_priv)
+        return 0;
+    struct PTY_REF *r = (struct PTY_REF *)f->dev_priv;
+    struct PTY *p = r->p;
+    struct TTY_IOQUEUE *q = r->is_master ? &p->s2m : &p->m2s;
+    struct TTY_IOQUEUE *peer = r->is_master ? &p->m2s : &p->s2m;
+    uint32_t fl = cpu_eflags();
+    cpu_cli();
+    uint32_t rv = 0;
+    if (ioq_length(q) > 0)
+        rv |= CHARDEV_POLL_READABLE;
+    if (!ioq_full(peer))
+        rv |= CHARDEV_POLL_WRITABLE;
+    cpu_set_eflags(fl);
+    return rv;
 }
 
 void pty_chardev_close(struct FILE *f) {

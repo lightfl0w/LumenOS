@@ -12,7 +12,7 @@
 #include "mm/bitmap.h"
 #include "mm/pool.h"
 #include "uapi/linux_abi.h"
-#define MMAP_MAX_BYTES 0x10000000u
+#define MMAP_MAX_BYTES 0x40000000u
 #define PROT_MASK (PROT_READ | PROT_WRITE | PROT_EXEC)
 #define OFF_MASK 0x000ffffffffff000ull
 static int32_t unmap_pages(uint32_t addr, uint32_t pages) {
@@ -35,7 +35,9 @@ static void apply_prot(uint32_t v, uint32_t prot) {
     uint64_t *pte = pte_ptr(v);
     if (pte == NULL || !(*pte & PTE_P))
         return;
-    *pte = (*pte & OFF_MASK) | pte_wx(PTE_P | PTE_U, !!(prot & PROT_WRITE), !!(prot & PROT_EXEC));
+    *pte = (*pte & OFF_MASK) |
+           pte_wx(PTE_P | PTE_U, !!(prot & PROT_WRITE), !!(prot & PROT_EXEC)) |
+           (*pte & (COW_FLAG | SHM_FLAG));
     arch_tlb_flush(v);
 }
 
@@ -83,6 +85,8 @@ uint32_t sys_mmap(const struct SYS_MMAP_ARGS *a) {
             (a->addr < USER_HIGH_MMIO_END && a->addr + span > USER_LOW_CEILING))
             return -LINUX_ENOMEM;
         unmap_pages(a->addr, pages);
+        vaddr_unreserve(a->addr, pages);
+        shmem_unmap_range(cur->pml4_phys, a->addr, pages);
         if (vaddr_reserve_at(a->addr, pages) != 0)
             return -LINUX_ENOMEM;
         base = a->addr;
@@ -92,9 +96,13 @@ uint32_t sys_mmap(const struct SYS_MMAP_ARGS *a) {
     if (base == 0)
         return -LINUX_ENOMEM;
     if (!(a->flags & MAP_ANONYMOUS) && (int32_t)a->fd >= 0) {
+        if (shmem_fd_is_shmem((int32_t)a->fd)) {
+            if (shmem_fd_mmap((int32_t)a->fd, base, pages, a->prot, a->offset) == 0)
+                return base;
+            vaddr_unreserve(base, pages);
+            return -LINUX_EINVAL;
+        }
         if (drm_fd_mmap((int32_t)a->fd, base, pages, a->prot, a->offset) == 0)
-            return base;
-        if (shmem_fd_mmap((int32_t)a->fd, base, pages, a->prot, a->offset) == 0)
             return base;
     }
     if (map_run(base, pages, PROT_READ | PROT_WRITE) == 0) {
@@ -125,6 +133,8 @@ int32_t sys_munmap(uint32_t addr, uint32_t len) {
     if (addr < USER_HIGH_MMIO_END && addr + pages * PAGE_SIZE > USER_LOW_CEILING)
         return -LINUX_EINVAL;
     unmap_pages(addr, pages);
+    vaddr_unreserve(addr, pages);
+    shmem_unmap_range(current->pml4_phys, addr, pages);
     return 0;
 }
 

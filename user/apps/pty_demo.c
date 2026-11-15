@@ -6,8 +6,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define MY_TIOCGPTN 0x8004540Fu
-#define MY_TIOCSPTLCK 0x40045411u
+#define MY_TIOCGPTN 0x80045430u
+#define MY_TIOCSPTLCK 0x40045431u
 
 static int readn(int fd, void *buf, int n) {
     int got = 0;

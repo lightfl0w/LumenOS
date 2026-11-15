@@ -572,6 +572,12 @@ int32_t compat_openat(int32_t dirfd, const char *kpath, uint32_t lflags, uint32_
                                 mode & 0o7777u & ~current->umask);
     if (fd < 0)
         return -(current->errno > 0 ? current->errno : LINUX_ENOENT);
+    if (lflags & LINUX_O_NONBLOCK) {
+        struct FILE *pf = lc_file_from_fd(fd);
+        if (pf != NULL) {
+            pf->fd_nonblock = 1;
+        }
+    }
     if (lflags & LINUX_O_TRUNC)
         compat_ftruncate(fd, 0);
     if (lflags & LINUX_O_APPEND)
@@ -703,7 +709,6 @@ int32_t compat_read(int32_t fd, void *buf, uint32_t count) {
     }
     if (fd == 0)
         return TTY.read((char *)buf, count);
-    kprintf("[crdbg2] compat_read fallback fd=%d\n", fd);
     return -LINUX_EBADF;
 }
 
@@ -910,6 +915,8 @@ static int pseudo_fd_slot(int32_t fd) {
 }
 
 int64_t lc_fcntl(LC_ARGS) {
+    if ((int32_t)b == LINUX_F_ADD_SEALS || (int32_t)b == LINUX_F_GET_SEALS)
+        return 0;
     int uslot = unix_fd_slot((uint64_t)a);
     if (uslot >= 0) {
         if ((int32_t)b == LINUX_F_SETFL)

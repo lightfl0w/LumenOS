@@ -41,6 +41,17 @@ static int sh_exec_line(const char *line) {
     }
     argv[argc] = 0;
 
+    if (argc > 0 && strcmp(argv[0], "exit") == 0) {
+        _exit(argc > 1 ? atoi(argv[1]) : 0);
+    }
+    if (argc > 0 && strcmp(argv[0], "cd") == 0) {
+        const char *dir = argc > 1 ? argv[1] : "/";
+        if (chdir(dir) < 0) {
+            perror("cd");
+        }
+        return 0;
+    }
+
     char path[SH_LINE_MAX];
     pid_t pid = fork();
     if (pid < 0) {

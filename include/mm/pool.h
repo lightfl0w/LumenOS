@@ -34,6 +34,7 @@ void pfree(struct MM_POOL *pool, uint32_t phy_addr);
 uint32_t palloc_pages(struct MM_POOL *pool, uint32_t cnt);
 
 #define COW_FLAG (1u << 9)
+#define SHM_FLAG (1u << 10)
 
 int page_cow_resolve(uint32_t vaddr, uint64_t pte_val);
 void page_cow_share(uint32_t phy_addr);
@@ -73,6 +74,7 @@ void page_free_or_decref_va(uint32_t phy_addr, uint32_t vaddr);
 
 uint64_t *pte_ptr(uint32_t vaddr);
 uint64_t *pde_ptr(uint32_t vaddr);
+int user_map_shmem_page(uint32_t vaddr, uint32_t phys, uint32_t prot);
 void page_table_dump(uint32_t vaddr);
 void *get_a_page(uint32_t vaddr);
 int ensure_user_page(uint32_t vaddr);

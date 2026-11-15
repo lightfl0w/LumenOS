@@ -53,11 +53,15 @@ class Task:
         return False
     def dep_paths(self) -> Iterable[Path]:
         base = self.cwd or Path.cwd()
+        if self.out is not None and self.out.exists():
+            yield self.out
         for d in self.deps:
             if isinstance(d, Path):
                 if d.exists():
                     yield d
                 continue
+            if isinstance(d, Task) and d.out is not None and d.out.exists():
+                yield d.out
         for tok in self.cmd:
             if tok.startswith("-"):
                 continue

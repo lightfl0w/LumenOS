@@ -1,3 +1,4 @@
+import os
 import shutil
 import struct
 import subprocess
@@ -5,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 import make_fat
+REPO = Path(__file__).resolve().parent.parent
+ALPINE = REPO / "third_party" / "alpine-foot"
 SECTOR = 512
 TOTAL_SECTORS = 1024 * 1024 * 1024 // SECTOR
 P2_START = 18432
@@ -44,6 +47,8 @@ FILES = [
     "unixsock_test.elf", "memfdtest.elf", "wlsmoke.elf", "waytest.elf",
     "tlsclient.elf", "apktls.elf", "kmstest.elf", "dirtest.elf",
     "shell.elf", "drmtest.elf", "seatprobe.elf", "wltest.elf",
+    "sway.elf", "wlprobe.elf", "swayclient.elf", "epollfork.elf", "foot.elf",
+    "swaysuper.elf", "pthread.elf", "cloexec.elf",
 ]
 SHARE_FILES = [
     "font_subset.ttf", "wallpaper.png", "pic1.png", "pic2.png",
@@ -86,6 +91,23 @@ ETC_FILES = [
     ("shadow", b"root::0:0:99999:7:::\nuser::0:0:99999:7:::\n", 0o100600),
     ("hosts", b"127.0.0.1 localhost localhost.localdomain\n", 0o100644),
     ("resolv.conf", b"nameserver 10.0.2.3\noptions timeout:1 attempts:8\n", 0o100644),
+    ("sway/config",
+     b"output * mode 1024x768\n"
+     b"input * xkb_layout us\n"
+     b"bindsym Mod4+Shift+e exit\n"
+     b"bindsym Mod4+p exec /bin/wlprobe.elf\n"
+     b"bindsym Mod1+Return exec /bin/foot.elf\n"
+     b"default_orientation horizontal\n",
+     0o100644),
+    ("xdg/foot/foot.ini",
+     b"[main]\n"
+     b"term=foot\n"
+     b"font=monospace:size=10\n"
+     b"shell=/bin/sh.elf\n"
+     b"pad=4x4\n"
+     b"\n[tweak]\n"
+     b"max-shm-pool-size-mb=64\n",
+     0o100644),
     ("services",
      b"ftp 21/tcp\nssh 22/tcp\ndomain 53/udp\ndomain 53/tcp\n"
      b"http 80/tcp\nhttps 443/tcp\n", 0o100644),
@@ -159,6 +181,8 @@ def debugfs_cmds(bd, tmp, pre, names, smoke):
     for name, mode in DIRS:
         cmds.append(f"mkdir {name}")
         cmds.append(f"sif /{name} mode 0{mode:o}")
+    for d in ("var", "var/cache", "var/cache/fontconfig"):
+        cmds.append(f"mkdir {d}")
     apk_dir = bd / "apk"
     for dest in SYS_DIRS:
         parts = [p for p in dest.split("/") if p]
@@ -207,9 +231,91 @@ def debugfs_cmds(bd, tmp, pre, names, smoke):
         if src.exists():
             mode = 0o100755 if name in SHARE_EXEC else 0o100644
             emit_file(cmds, src, f"/share/{name}", mode)
+    xkb_src = Path("/usr/share/xkeyboard-config-2")
+    if xkb_src.is_dir():
+        cmds.append("mkdir share/xkb")
+        for path in sorted(xkb_src.rglob("*")):
+            rel = path.relative_to(xkb_src).as_posix()
+            dest = f"/share/xkb/{rel}"
+            if path.is_dir():
+                cmds.append(f"mkdir {dest}")
+            else:
+                emit_file(cmds, path, dest, 0o100644)
+    ALPINE_MUSL = {"libc.musl-x86_64.so.1", "ld-musl-x86_64.so.1"}
+    for lib_src in (ALPINE / "lib", ALPINE / "usr" / "lib"):
+        if not lib_src.is_dir():
+            continue
+        for path in sorted(lib_src.iterdir()):
+            if path.name in ALPINE_MUSL:
+                continue
+            dest = f"/lib/{path.name}"
+            if path.is_symlink():
+                target = path.parent / os.readlink(path)
+                if target.is_file():
+                    emit_file(cmds, target, dest, 0o100755)
+            elif path.is_file():
+                emit_file(cmds, path, dest, 0o100755)
+    font_src = ALPINE / "usr" / "share" / "fonts"
+    if font_src.is_dir():
+        cmds.append("mkdir usr")
+        cmds.append("mkdir usr/share")
+        cmds.append("mkdir usr/share/fonts")
+        for path in sorted(font_src.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in (
+                    ".ttf", ".otf", ".ttc"):
+                continue
+            rel = path.relative_to(font_src).as_posix()
+            parts = rel.split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                cmds.append("mkdir usr/share/fonts/" + "/".join(parts[:i]))
+            emit_file(cmds, path, f"/usr/share/fonts/{rel}", 0o100644)
+    fc_src = ALPINE / "etc" / "fonts"
+    if fc_src.is_dir():
+        fc_dirs = {"etc/fonts"}
+        fc_files = []
+        for path in sorted(fc_src.rglob("*")):
+            rel = path.relative_to(fc_src).as_posix()
+            if path.is_file() or path.is_symlink():
+                parts = rel.split("/")[:-1]
+            else:
+                parts = rel.split("/")
+            for i in range(1, len(parts) + 1):
+                fc_dirs.add("etc/fonts/" + "/".join(parts[:i]))
+            if path.is_symlink():
+                target = path.parent / os.readlink(path)
+                if target.is_file():
+                    fc_files.append((target, rel))
+            elif path.is_file():
+                fc_files.append((path, rel))
+        for d in sorted(fc_dirs, key=lambda x: x.count("/")):
+            cmds.append(f"mkdir {d}")
+        for path, rel in fc_files:
+            emit_file(cmds, path, f"/etc/fonts/{rel}", 0o100644)
+    terminfo_src = ALPINE / "usr" / "share" / "terminfo"
+    if terminfo_src.is_dir():
+        cmds.append("mkdir usr")
+        cmds.append("mkdir usr/share")
+        cmds.append("mkdir usr/share/terminfo")
+        for path in sorted(terminfo_src.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(terminfo_src).as_posix()
+            parts = rel.split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                cmds.append("mkdir usr/share/terminfo/" + "/".join(parts[:i]))
+            emit_file(cmds, path, f"/usr/share/terminfo/{rel}", 0o100644)
+    font_file = bd / "font_subset.ttf"
+    if font_file.exists():
+        cmds.append("mkdir usr")
+        cmds.append("mkdir usr/share")
+        cmds.append("mkdir usr/share/fonts")
+        emit_file(cmds, font_file, "/usr/share/fonts/lumen.ttf", 0o100644)
     for name, payload, mode in ETC_FILES:
-        src = tmp / f"etc_{name}"
+        src = tmp / f"etc_{name.replace('/', '_')}"
         src.write_bytes(payload)
+        parts = name.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            cmds.append("mkdir etc/" + "/".join(parts[:i]))
         emit_file(cmds, src, f"/etc/{name}", mode)
     if apk_static.exists():
         emit_file(cmds, apk_static, "/bin/apk.static", 0o100755)
@@ -217,6 +323,7 @@ def debugfs_cmds(bd, tmp, pre, names, smoke):
         src = bd / name
         if src.exists():
             emit_file(cmds, src, f"/lib/{name}", 0o100755)
+    cmds.append("symlink /lib/libc.musl-x86_64.so.1 /lib/libc.so")
     for name in BIN_LINKS:
         tgt = "/bin/sh.elf" if name == "sh" else "/bin/busybox"
         cmds.append(f"symlink /bin/{name} {tgt}")
@@ -236,6 +343,8 @@ def populate(bd, tmp, p2_img, smoke, autoexec):
     pre = {}
     for name in list(FILES) + [a for a in ALIASES if (bd / a).exists()]:
         src = bd / ALIASES.get(name, name)
+        if name == "foot.elf":
+            src = ALPINE / "usr" / "bin" / "foot"
         if src.exists():
             pre[name] = src
     if smoke:
@@ -246,7 +355,7 @@ def populate(bd, tmp, p2_img, smoke, autoexec):
         pre["shell.conf"].write_bytes(b"/bin/init_sh.elf\n")
     else:
         pre["autoexec"] = tmp / "autoexec"
-        pre["autoexec"].write_bytes(b"/bin/busybox login\n")
+        pre["autoexec"].write_bytes(b"")
     cmds = debugfs_cmds(bd, tmp, pre, list(pre), smoke)
     script = tmp / "debugfs.cmds"
     script.write_text("\n".join(cmds) + "\n")

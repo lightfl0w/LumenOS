@@ -43,3 +43,10 @@
 [submodule "third_party/eudev"]
 	path = third_party/eudev
 	url = https://github.com/eudev-project/eudev.git
+[submodule "third_party/foot"]
+	path = third_party/foot
+	url = https://codeberg.org/dnkl/foot.git
+[submodule "third_party/sway"]
+	path = third_party/sway
+	url = https://github.com/swaywm/sway.git
+	branch = 1.9

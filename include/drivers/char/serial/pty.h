@@ -5,8 +5,12 @@
 #define NPTY 8
 #define PTY_MASTER_MAJOR 136u
 #define PTY_SLAVE_MAJOR 137u
-#define PTY_TIOCGPTN 0x8004540Fu
-#define PTY_TIOCSPTLCK 0x40045411u
+/* Linux x86_64 values (_IOR('T', 0x30, unsigned int) / _IOW('T', 0x31, int)) */
+#define PTY_TIOCGPTN 0x80045430u
+#define PTY_TIOCSPTLCK 0x40045431u
+/* Legacy constants used by older in-tree probes; accepted for compatibility. */
+#define PTY_TIOCGPTN_LEGACY 0x8004540Fu
+#define PTY_TIOCSPTLCK_LEGACY 0x40045411u
 #define PTY_TIOCSCTTY 0x540Eu
 #define PTY_TIOCGPGRP 0x540fu
 #define PTY_TIOCSPGRP 0x5410u
@@ -28,6 +32,7 @@ int pty_chardev_open(struct FILE *f, uint32_t dev);
 int32_t pty_chardev_read(struct FILE *f, void *buf, uint32_t count);
 int32_t pty_chardev_write(struct FILE *f, const void *buf, uint32_t count);
 int pty_chardev_ioctl(struct FILE *f, uint32_t cmd, uint64_t arg);
+uint32_t pty_chardev_poll(struct FILE *f);
 void pty_chardev_close(struct FILE *f);
 int pty_has_priv(const struct FILE *f);
 #endif

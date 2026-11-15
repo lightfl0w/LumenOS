@@ -1,4 +1,6 @@
 #include "mm/access.h"
+#include "lib/printf/printf.h"
+#include "kernel/ipc/shmem.h"
 #include "kernel/userprog/process.h"
 #include "lib/string/str.h"
 #include "arch/mmu.h"
@@ -15,7 +17,14 @@ int access_ok(const void *addr, size_t n, int write) {
     }
     return user_range_walk(a, (uint32_t)n, write);
 }
+int mm_shmem_fault(uint32_t vaddr, int write, uint32_t *phys, uint32_t *prot) {
+    return shmem_fault(vaddr, write, phys, prot);
+}
+
 static int user_page_readable(uint32_t a) {
+    if (!page_is_mapped(a & ~0xfffu) && shmem_ensure_page(a & ~0xfffu, 0) != 0) {
+        return 0;
+    }
     uint64_t *pde = pde_ptr(a);
     if (pde == NULL || !(*pde & PTE_P)) {
         return 0;
@@ -27,6 +36,9 @@ static int user_page_readable(uint32_t a) {
     return (*pte & PTE_P) && (*pte & PTE_U);
 }
 static int user_page_writable(uint32_t a) {
+    if (!page_is_mapped(a & ~0xfffu) && shmem_ensure_page(a & ~0xfffu, 1) != 0) {
+        return 0;
+    }
     uint64_t *pde = pde_ptr(a);
     if (pde == NULL || !(*pde & PTE_P)) {
         return 0;

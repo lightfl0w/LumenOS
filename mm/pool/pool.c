@@ -8,6 +8,7 @@
 #include "arch/percpu.h"
 #include "kernel/sched/thread.h"
 #include "kernel/sync/sync.h"
+#include "kernel/syscall/mmap.h"
 #include "kernel/userprog/process.h"
 #include "lib/rand/rand.h"
 #include "lib/string/str.h"
@@ -520,23 +521,28 @@ void *get_a_page(uint32_t vaddr) {
     lock_release(&map_lock);
     return (void *)vaddr;
 }
-uint32_t vaddr_reserve_run(uint32_t pages) {
+static uint32_t vaddr_scan_run(uint32_t pages, uint32_t lo, uint32_t hi, int randomize) {
     struct TASK *cur = current;
     uint32_t start = cur->userprog_v_addr.vaddr_start;
-    uint32_t limit = USER_LOW_CEILING;
-    uint32_t total = (limit - start) / PAGE_SIZE;
     uint32_t slots = cur->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8;
-    if (total > slots)
-        total = slots;
+    if (lo < start)
+        lo = start;
+    lo = (lo + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    hi = hi & ~(PAGE_SIZE - 1);
+    if (hi <= lo)
+        return 0;
+    uint32_t total = (hi - lo) / PAGE_SIZE;
+    uint32_t first = (lo - start) / PAGE_SIZE;
+    if (first + total > slots)
+        total = slots - first;
     if (pages == 0 || pages > total)
         return 0;
-    lock_acquire(&map_lock);
-    uint32_t offset = rand_u32() % total;
+    uint32_t offset = randomize ? rand_u32() % total : 0;
     uint32_t run = 0;
     uint32_t last = 0;
     uint32_t base = 0;
     for (uint32_t i = 0; i < total && base == 0; i++) {
-        uint32_t idx = (offset + total - 1 - i) % total;
+        uint32_t idx = first + (offset + total - 1 - i) % total;
         uint32_t v = start + idx * PAGE_SIZE;
         if (bitmap_scan_test(&cur->userprog_v_addr.vaddr_bitmap, idx) || page_is_mapped(v) ||
             (run != 0 && v + PAGE_SIZE != last)) {
@@ -547,6 +553,17 @@ uint32_t vaddr_reserve_run(uint32_t pages) {
         if (++run == pages)
             base = v;
     }
+    return base;
+}
+
+uint32_t vaddr_reserve_run(uint32_t pages) {
+    struct TASK *cur = current;
+    uint32_t start = cur->userprog_v_addr.vaddr_start;
+    uint32_t high_limit = USER_STACK_TOP - 0x800000u;
+    lock_acquire(&map_lock);
+    uint32_t base = vaddr_scan_run(pages, start, USER_LOW_CEILING, 1);
+    if (base == 0)
+        base = vaddr_scan_run(pages, USER_HIGH_MMIO_END, high_limit, 0);
     if (base != 0) {
         uint32_t bidx = (base - start) / PAGE_SIZE;
         for (uint32_t i = 0; i < pages; i++)
@@ -606,6 +623,22 @@ uint32_t user_remap_page(uint32_t vaddr) {
     fr_va_map(vaddr, phy, "remap");
     lock_release(&map_lock);
     return phy;
+}
+
+int user_map_shmem_page(uint32_t vaddr, uint32_t phys, uint32_t prot) {
+    lock_acquire(&map_lock);
+    uint64_t *pte = arch_pte_create(arch_current_pgd(), (uint64_t)vaddr);
+    if (pte == NULL) {
+        lock_release(&map_lock);
+        return -1;
+    }
+    uint64_t val = pte_wx((uint64_t)phys | PTE_P | PTE_U, !!(prot & PROT_WRITE),
+                          !!(prot & PROT_EXEC)) |
+                   SHM_FLAG;
+    *pte = val;
+    arch_tlb_flush(vaddr);
+    lock_release(&map_lock);
+    return 0;
 }
 void vaddr_unreserve(uint32_t base, uint32_t pages) {
     struct TASK *cur = current;
@@ -702,11 +735,16 @@ void free_user_page(uint32_t vaddr) {
     uint64_t *pte = pte_ptr(vaddr);
     if (*pte & 1) {
         uint32_t phy = (uint32_t)(*pte & 0xfffff000ull);
+        uint64_t flags = *pte;
         *pte = 0;
         arch_tlb_flush(vaddr);
         uint32_t bit_idx = (vaddr - cur->userprog_v_addr.vaddr_start) / PAGE_SIZE;
         if (bit_idx < cur->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8) {
             bitmap_set(&cur->userprog_v_addr.vaddr_bitmap, bit_idx, 0);
+        }
+        if (flags & SHM_FLAG) {
+            lock_release(&map_lock);
+            return;
         }
         lock_release(&map_lock);
         page_free_or_decref_va(phy, vaddr);

@@ -65,6 +65,7 @@ static const uint16_t sc_to_key[128] = {
     [75] = KEY_KP4, [76] = KEY_KP5, [77] = KEY_KP6, [78] = KEY_KPPLUS,
     [79] = KEY_KP1, [80] = KEY_KP2, [81] = KEY_KP3, [82] = KEY_KP0, [83] = KEY_KPDOT,
     [87] = KEY_F11, [88] = KEY_F12,
+    [91] = KEY_LEFTMETA, [92] = KEY_RIGHTMETA,
 };
 
 void keyboard_init(void) {

@@ -117,8 +117,12 @@ static int32_t pty_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
     return pty_chardev_ioctl(file, cmd, arg);
 }
 
+static uint32_t pty_poll(struct FILE *file) {
+    return pty_chardev_poll(file);
+}
+
 static const struct CHARDEV_OPS pty_ops = {pty_open,  pty_release, pty_read,
-                                            pty_write, pty_ioctl,   NULL};
+                                            pty_write, pty_ioctl,   pty_poll};
 
 static int chardev_core_init(void) {
     chardev_register(1, &mem_ops);

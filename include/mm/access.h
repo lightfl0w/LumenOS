@@ -16,6 +16,7 @@ int copy_to_user(void *udst, const void *src, uint32_t len);
 int user_strnlen(const char *src, uint32_t max);
 
 int page_is_mapped(uint32_t v);
+int mm_shmem_fault(uint32_t vaddr, int write, uint32_t *phys, uint32_t *prot);
 
 void mm_make_user_rx(uint32_t base, uint32_t pages);
 

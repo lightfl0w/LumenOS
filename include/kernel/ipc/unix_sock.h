@@ -16,8 +16,13 @@ int unix_path_bound(const char *path);
 
 int32_t unix_send(int idx, const void *buf, uint32_t len);
 int32_t unix_recv(int idx, void *buf, uint32_t len);
+int32_t unix_recv_flags(int idx, void *buf, uint32_t len, int nonblock);
 int32_t unix_send_data(int idx, const void *buf, uint32_t len, const int *gfds, int nfds);
 int32_t unix_recv_data(int idx, void *buf, uint32_t len, int *gfds, int *nfds);
+int32_t unix_send_data_flags(int idx, const void *buf, uint32_t len, const int *gfds, int nfds,
+                             int nonblock);
+int32_t unix_recv_data_flags(int idx, void *buf, uint32_t len, int *gfds, int *nfds,
+                             int nonblock);
 
 void unix_set_nonblock(int idx, int on);
 

@@ -417,8 +417,10 @@ int64_t lc_mmap(LC_ARGS) {
     struct SYS_MMAP_ARGS m = {(uint32_t)a, (uint32_t)b,
                               (uint32_t)c, (uint32_t)d,
                               (uint32_t)e, (uint32_t)(f & ~(uint32_t)(PAGE_SIZE - 1u))};
-    int64_t ret = (int32_t)sys_mmap(&m);
-    return ret;
+    uint32_t ret = sys_mmap(&m);
+    if (ret >= 0xFFFFF001u)
+        return (int64_t)(int32_t)ret;
+    return (int64_t)ret;
 }
 int64_t lc_munmap(LC_ARGS) {
     return sys_munmap((uint32_t)a, (uint32_t)b);

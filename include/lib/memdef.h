@@ -9,6 +9,7 @@
 #define MAX_PHYS_MEM 0x20000000
 
 #define COW_FLAG (1u << 9)
+#define SHM_FLAG (1u << 10)
 
 #define DIV_ROUND_UP(x, step) (((x) + (step) - 1) / (step))
 

@@ -66,6 +66,11 @@ static void cow_share_pte(uint64_t *pt, uint64_t *child_pt, uint32_t pte_idx,
     if (!cow_vaddr_ok(vaddr)) {
         return;
     }
+    if (pte & SHM_FLAG) {
+        mark_child_bitmap(child, vaddr);
+        child_pt[pte_idx] = pte;
+        return;
+    }
     uint32_t src_phy = (uint32_t)PTE_PHYS(pte);
     page_cow_share(src_phy);
     pt[pte_idx] = (pte & ~(uint64_t)PTE_W) | COW_FLAG;
@@ -157,6 +162,7 @@ pid_t sys_fork(struct ARCH_REGS *r) {
             file_table_ref(child->fd_table[i]);
         }
     }
+    child->fd_cloexec = parent->fd_cloexec;
     child->pipe_wr_mask = parent->pipe_wr_mask;
     child->exit_status = 0;
     child->signal_mask = parent->signal_mask;
@@ -186,6 +192,7 @@ pid_t sys_fork(struct ARCH_REGS *r) {
     if (copy_user_space(parent, child) != 0) {
         goto fork_fail;
     }
+    shmem_fork_space(parent->pml4_phys, child->pml4_phys);
 
     thread_build_child_stack(child, r, (uint32_t)r->user_rsp);
     child->status = TASK_BLOCKED;

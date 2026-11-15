@@ -1,6 +1,7 @@
 #ifndef SCHED_THREAD_H
 #define SCHED_THREAD_H
 #include "arch/percpu.h"
+#include "kernel/ipc/shmem.h"
 #include "kernel/signal.h"
 #include "lib/list/list.h"
 #include "mm/pool.h"

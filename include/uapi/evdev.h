@@ -89,6 +89,8 @@
 #define KEY_RIGHTSHIFT 54
 #define KEY_KPASTERISK 55
 #define KEY_LEFTALT 56
+#define KEY_LEFTMETA 125
+#define KEY_RIGHTMETA 126
 #define KEY_SPACE 57
 #define KEY_CAPSLOCK 58
 #define KEY_F1 59

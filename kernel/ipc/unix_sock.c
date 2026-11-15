@@ -365,7 +365,8 @@ static int32_t queue_message(struct UNIX_SOCK *p, const void *buf, uint32_t len,
     return (int32_t)len;
 }
 
-int32_t unix_send_data(int idx, const void *buf, uint32_t len, const int *gfds, int nfds) {
+int32_t unix_send_data_flags(int idx, const void *buf, uint32_t len, const int *gfds, int nfds,
+                             int nonblock) {
     struct UNIX_SOCK *s = sock(idx);
     if (s == NULL || s->state != US_CONNECTED || s->peer < 0) {
         return -32;
@@ -379,14 +380,19 @@ int32_t unix_send_data(int idx, const void *buf, uint32_t len, const int *gfds, 
         if (rc >= 0) {
             return rc;
         }
-        if (s->nonblock || !sock(idx) || !sock(s->peer)) {
+        if (s->nonblock || nonblock || !sock(idx) || !sock(s->peer)) {
             return -11;
         }
         mtime_sleep(2);
     }
 }
 
-int32_t unix_recv_data(int idx, void *buf, uint32_t len, int *gfds, int *nfds) {
+int32_t unix_send_data(int idx, const void *buf, uint32_t len, const int *gfds, int nfds) {
+    return unix_send_data_flags(idx, buf, len, gfds, nfds, 0);
+}
+
+int32_t unix_recv_data_flags(int idx, void *buf, uint32_t len, int *gfds, int *nfds,
+                             int nonblock) {
     struct UNIX_SOCK *s = sock(idx);
     if (s == NULL) {
         return -9;
@@ -396,7 +402,7 @@ int32_t unix_recv_data(int idx, void *buf, uint32_t len, int *gfds, int *nfds) {
         if (s->cur_valid || s->mcount > 0) {
             break;
         }
-        if (s->nonblock) {
+        if (s->nonblock || nonblock) {
             return -11;
         }
         if (!unix_peer_alive(idx)) {
@@ -429,14 +435,18 @@ int32_t unix_recv_data(int idx, void *buf, uint32_t len, int *gfds, int *nfds) {
     return (int32_t)n;
 }
 
+int32_t unix_recv_data(int idx, void *buf, uint32_t len, int *gfds, int *nfds) {
+    return unix_recv_data_flags(idx, buf, len, gfds, nfds, 0);
+}
+
 int32_t unix_send(int idx, const void *buf, uint32_t len) {
     return unix_send_data(idx, buf, len, NULL, 0);
 }
 
-int32_t unix_recv(int idx, void *buf, uint32_t len) {
+int32_t unix_recv_flags(int idx, void *buf, uint32_t len, int nonblock) {
     int gfds[UNIX_MAX_FDS];
     int nfds = 0;
-    int32_t n = unix_recv_data(idx, buf, len, gfds, &nfds);
+    int32_t n = unix_recv_data_flags(idx, buf, len, gfds, &nfds, nonblock);
     if (n > 0 && nfds > 0) {
         struct UNIX_SOCK *s = sock(idx);
         if (s != NULL) {
@@ -446,6 +456,10 @@ int32_t unix_recv(int idx, void *buf, uint32_t len) {
         }
     }
     return n;
+}
+
+int32_t unix_recv(int idx, void *buf, uint32_t len) {
+    return unix_recv_flags(idx, buf, len, 0);
 }
 
 uint32_t unix_events(int idx) {

@@ -91,12 +91,43 @@ static uint64_t read_cr2(void) {
     return cr2;
 }
 
+static int handle_shmem_fault(struct ARCH_REGS *r, uint32_t fault_addr) {
+    uint32_t error_code = (uint32_t)r->err_code;
+    uint32_t page = fault_addr & ~0xfffu;
+    if (error_code & 0x1) {
+        if (!(error_code & 0x2)) {
+            return 0;
+        }
+        uint32_t phys;
+        uint32_t prot;
+        if (!mm_shmem_fault(fault_addr, 1, &phys, &prot)) {
+            return 0;
+        }
+        uint64_t *pte = pte_ptr(page);
+        if (pte == NULL || !(*pte & PTE_P) || !(*pte & SHM_FLAG)) {
+            return 0;
+        }
+        *pte |= PTE_W;
+        arch_tlb_flush(page);
+        return 1;
+    }
+    uint32_t phys = 0;
+    uint32_t prot = 0;
+    if (!mm_shmem_fault(fault_addr, !!(error_code & 0x2), &phys, &prot)) {
+        return 0;
+    }
+    return user_map_shmem_page(page, phys, prot) == 0;
+}
+
 static int handle_recoverable_fault(struct ARCH_REGS *r) {
     if (r->int_no != 14) {
         return 0;
     }
     uint64_t cr2 = read_cr2();
     if (handle_cow_fault((uint32_t)cr2, r->err_code)) {
+        return 1;
+    }
+    if ((r->cs & 3) == 3 && handle_shmem_fault(r, (uint32_t)cr2)) {
         return 1;
     }
     return (r->cs & 3) == 3 &&

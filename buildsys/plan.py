@@ -624,7 +624,10 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                  f"cd {shlex.quote(str(BUSYBOX_DIR))} && "
                  f"[ -f .config ] || {{ make defconfig >/dev/null 2>&1; "
                  f"sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config; "
-                 f"yes '' | make oldconfig >/dev/null 2>&1; }}; true"],
+                 f"yes '' | make oldconfig >/dev/null 2>&1; }}; "
+                 f"sed -i 's/^CONFIG_TC=y/# CONFIG_TC is not set/' .config; "
+                 f"sed -i 's/^CONFIG_FEATURE_TC_INGRESS=y/# CONFIG_FEATURE_TC_INGRESS is not set/' .config; "
+                 f"true"],
             out=BUSYBOX_DIR / ".config",
             deps=[BUSYBOX_DIR / "Makefile"],
             optional=True, group="busybox",
@@ -780,6 +783,124 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                 optional=True, group="musl",
                 description="link wlsmoke.elf (wayland smoke)")
             tasks.append(wl_smoke_link)
+            wl_probe_c = task_cc(
+                "test_wlprobe.o", TESTS / "probes" / "wlprobe.c",
+                BUILD_DIR / "wlprobe.o", tools,
+                MUSL_DEMO_CFLAGS + ["-I", str(ROOT / "third_party" / "wayland" / "src"),
+                                     "-I", str(ROOT / "third_party" / "wayland"),
+                                     "-I", str(BUILD_DIR / "wayland-gen"),
+                                     "-I", str(BUILD_DIR / "wlroots" / "include" / "protocol")])
+            wl_probe_c.optional = True
+            wl_probe_c.group = "musl"
+            tasks.append(wl_probe_c)
+            wl_probe_link = Task(
+                name="test_wlprobe.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "wlprobe.o"),
+                     str(BUILD_DIR / "wlroots" / "obj" / "proto-xdg-shell.o"),
+                     str(MUSL_LIB / "crtn.o"),
+                     str(BUILD_DIR / "wayland" / "libwayland-client.a"),
+                     str(BUILD_DIR / "ffi" / "lib" / "libffi.a"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "wlprobe.elf")],
+                out=BUILD_DIR / "wlprobe.elf",
+                deps=[BUILD_DIR / "wayland" / "libwayland-client.a",
+                      BUILD_DIR / "wlroots" / "obj" / "proto-xdg-shell.o"],
+                optional=True, group="musl",
+                description="link wlprobe.elf (xdg-shell + shm client)")
+            tasks.append(wl_probe_link)
+            sway_client_c = task_cc(
+                "test_swayclient.o", TESTS / "probes" / "swayclient.c",
+                BUILD_DIR / "swayclient.o", tools, MUSL_DEMO_CFLAGS)
+            sway_client_c.optional = True
+            sway_client_c.group = "musl"
+            tasks.append(sway_client_c)
+            sway_client_link = Task(
+                name="test_swayclient.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "swayclient.o"), str(MUSL_LIB / "crtn.o"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "swayclient.elf")],
+                out=BUILD_DIR / "swayclient.elf",
+                optional=True, group="musl",
+                description="link swayclient.elf (Sway + wlprobe launcher)")
+            tasks.append(sway_client_link)
+            epollfork_c = task_cc(
+                "test_epollfork.o", TESTS / "probes" / "epollfork.c",
+                BUILD_DIR / "epollfork.o", tools, MUSL_DEMO_CFLAGS)
+            epollfork_c.optional = True
+            epollfork_c.group = "musl"
+            tasks.append(epollfork_c)
+            epollfork_link = Task(
+                name="test_epollfork.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "epollfork.o"), str(MUSL_LIB / "crtn.o"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "epollfork.elf")],
+                out=BUILD_DIR / "epollfork.elf",
+                optional=True, group="musl",
+                description="link epollfork.elf (epoll + fork repro)")
+            tasks.append(epollfork_link)
+            swsuper_c = task_cc(
+                "test_swaysuper.o", TESTS / "probes" / "swaysuper.c",
+                BUILD_DIR / "swaysuper.o", tools, MUSL_DEMO_CFLAGS)
+            swsuper_c.optional = True
+            swsuper_c.group = "musl"
+            tasks.append(swsuper_c)
+            swsuper_link = Task(
+                name="test_swaysuper.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "swaysuper.o"), str(MUSL_LIB / "crtn.o"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "swaysuper.elf")],
+                out=BUILD_DIR / "swaysuper.elf",
+                optional=True, group="musl",
+                description="link swaysuper.elf (spawn supervisor)")
+            tasks.append(swsuper_link)
+            pthread_c = task_cc(
+                "test_pthread.o", TESTS / "probes" / "pthread_test.c",
+                BUILD_DIR / "pthread.o", tools, MUSL_DEMO_CFLAGS)
+            pthread_c.optional = True
+            pthread_c.group = "musl"
+            tasks.append(pthread_c)
+            pthread_link = Task(
+                name="test_pthread.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "pthread.o"), str(MUSL_LIB / "crtn.o"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "pthread.elf")],
+                out=BUILD_DIR / "pthread.elf",
+                optional=True, group="musl",
+                description="link pthread.elf (musl threads)")
+            tasks.append(pthread_link)
+            cloexec_c = task_cc(
+                "test_cloexec.o", TESTS / "probes" / "cloexec_test.c",
+                BUILD_DIR / "cloexec.o", tools, MUSL_DEMO_CFLAGS)
+            cloexec_c.optional = True
+            cloexec_c.group = "musl"
+            tasks.append(cloexec_c)
+            cloexec_link = Task(
+                name="test_cloexec.elf",
+                cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                     "-z", "pack-relative-relocs", "-e", "_start",
+                     str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                     str(BUILD_DIR / "cloexec.o"), str(MUSL_LIB / "crtn.o"),
+                     "-L", str(MUSL_LIB), "--start-group", "-lc", "--end-group",
+                     "-o", str(BUILD_DIR / "cloexec.elf")],
+                out=BUILD_DIR / "cloexec.elf",
+                optional=True, group="musl",
+                description="link cloexec.elf (CLOEXEC pipe test)")
+            tasks.append(cloexec_link)
             drm_test_c = task_cc(
                 "test_drmtest.o", TESTS / "probes" / "drmtest.c",
                 BUILD_DIR / "drmtest.o", tools,
@@ -1079,10 +1200,6 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             "#define SIZEOF_LONG 8",
             "#define STDC_HEADERS 1",
             "#define TOOLCHAIN_SUPPORTS_ATTRIBUTE_CONSTRUCTOR 1",
-            "#define USE_GCC_INLINE_ASM 1",
-            "#define USE_X86_MMX 1",
-            "#define USE_SSE2 1",
-            "#define USE_SSSE3 1",
             "#define TLS __thread",
         ]
         pixman_cfg_cmd = "printf '%s\\n' " + " ".join(
@@ -1102,16 +1219,11 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             'CRI=$("$MC" -print-resource-dir 2>/dev/null)/include; '
             + pixman_cfg_cmd +
             'cd "$PS"; ' + pixman_ver_cmd +
-            "for f in pixman.c pixman-access.c pixman-access-accessors.c pixman-bits-image.c pixman-combine32.c pixman-combine-float.c pixman-conical-gradient.c pixman-filter.c pixman-x86.c pixman-mips.c pixman-arm.c pixman-ppc.c pixman-edge.c pixman-edge-accessors.c pixman-fast-path.c pixman-glyph.c pixman-general.c pixman-gradient-walker.c pixman-image.c pixman-implementation.c pixman-linear-gradient.c pixman-matrix.c pixman-noop.c pixman-radial-gradient.c pixman-region16.c pixman-region32.c pixman-solid-fill.c pixman-timer.c pixman-trap.c pixman-utils.c pixman-mmx.c pixman-sse2.c; do "
+            "for f in pixman.c pixman-access.c pixman-access-accessors.c pixman-bits-image.c pixman-combine32.c pixman-combine-float.c pixman-conical-gradient.c pixman-filter.c pixman-x86.c pixman-mips.c pixman-arm.c pixman-ppc.c pixman-edge.c pixman-edge-accessors.c pixman-fast-path.c pixman-glyph.c pixman-general.c pixman-gradient-walker.c pixman-image.c pixman-implementation.c pixman-linear-gradient.c pixman-matrix.c pixman-noop.c pixman-radial-gradient.c pixman-region16.c pixman-region32.c pixman-solid-fill.c pixman-timer.c pixman-trap.c pixman-utils.c; do "
             '"$MC" -c pixman/$f -o "$PB/obj/${f%.c}.o" -O2 -fPIC -std=gnu17 '
             f"-DHAVE_CONFIG_H -I\"$PB/obj\" -I. -Ipixman "
             f"-I{shlex.quote(str(MUSL_INC))} "
             '-isystem "$CRI"; done; '
-            '"$MC" -c pixman/pixman-ssse3.c -o "$PB/obj/pixman-ssse3.o" '
-            "-O2 -fPIC -std=gnu17 -mssse3 -DHAVE_CONFIG_H "
-            '-I"$PB/obj" -I. -Ipixman '
-            f"-I{shlex.quote(str(MUSL_INC))} "
-            '-isystem "$CRI"; '
             'llvm-ar rcs "$PB/lib/libpixman-1.a" "$PB"/obj/*.o; '
             'cp pixman/pixman.h "$PB/include/"; '
             'cp "$PB/obj/pixman-version.h" "$PB/include/"'
@@ -1174,7 +1286,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             "#define HAVE_ASPRINTF 1\n"
             "#define HAVE_VASPRINTF 1\n"
             "#define DFLT_XKB_CONFIG_EXTRA_PATH \"\"\n"
-            "#define DFLT_XKB_CONFIG_ROOT \"/usr/share/X11/xkb\"\n"
+            "#define DFLT_XKB_CONFIG_ROOT \"/share/xkb\"\n"
             "#define DEFAULT_XKB_RULES \"evdev\"\n"
             "#define DEFAULT_XKB_MODEL \"pc105\"\n"
             "#define DEFAULT_XKB_LAYOUT \"us\"\n"
@@ -1303,7 +1415,31 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             f"mkdir -p {shlex.quote(str(BUILD_DIR / 'src'))}; "
             f"git -C {shlex.quote(str(wlroots_src))} archive 0.17.4 | "
             f"tar -x -C {shlex.quote(str(BUILD_DIR / 'src'))} "
-            "--one-top-level=wlroots-0.17.4"
+            "--one-top-level=wlroots-0.17.4; "
+            f"sed -i 's/^\\tparse_edid(wlr_conn, edid_len, edid);/"
+            "\\tif (edid_len > 0) { parse_edid(wlr_conn, edid_len, edid); }/' "
+            f"{shlex.quote(str(wlroots_src_pinned / 'backend' / 'drm' / 'drm.c'))}; "
+            f"cat > {shlex.quote(str(wlroots_src_pinned / 'util' / 'shm.c'))} <<'EOF'\n"
+            "#define _GNU_SOURCE\n"
+            "#include <fcntl.h>\n#include <stdbool.h>\n#include <stddef.h>\n"
+            "#include <stdlib.h>\n#include <sys/mman.h>\n#include <unistd.h>\n"
+            "#include \"util/shm.h\"\n"
+            "int allocate_shm_file(size_t size) {\n"
+            "\tint fd = memfd_create(\"wlroots\", MFD_CLOEXEC);\n"
+            "\tif (fd < 0) return -1;\n"
+            "\tif (ftruncate(fd, (off_t)size) < 0) { close(fd); return -1; }\n"
+            "\treturn fd;\n"
+            "}\n"
+            "bool allocate_shm_file_pair(size_t size, int *rw_fd_ptr, int *ro_fd_ptr) {\n"
+            "\tint fd = memfd_create(\"wlroots\", MFD_CLOEXEC);\n"
+            "\tif (fd < 0) return false;\n"
+            "\tif (ftruncate(fd, (off_t)size) < 0) { close(fd); return false; }\n"
+            "\tint ro = dup(fd);\n"
+            "\tif (ro < 0) { close(fd); return false; }\n"
+            "\t*rw_fd_ptr = fd;\n\t*ro_fd_ptr = ro;\n\treturn true;\n"
+            "}\n"
+            "EOF\n"
+            f"touch {shlex.quote(str(wlroots_src_pinned / 'meson.build'))}"
         )
         tasks.append(Task(
             name="wlroots-source-pinned",
@@ -1317,7 +1453,7 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
         xkb_src = ROOT / "third_party" / "libxkbcommon"
         wlroots_prefix = BUILD_DIR / "wlroots"
         wlroots_cflags = (
-            "-O2 -fPIC -std=gnu17 -D__linux__ -DWLR_USE_UNSTABLE "
+            "-O2 -fPIC -std=gnu17 -D__linux__ -DWLR_USE_UNSTABLE -include limits.h -include stdlib.h -include string.h -include float.h "
             "-Wno-unused-parameter -Wno-unused-function "
             "-Wno-implicit-fallthrough -Wno-deprecated-declarations "
             "-Wno-format-truncation -Wno-sign-compare")
@@ -1410,8 +1546,11 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             '"$MC" ' + wlroots_cflags + ' ' + wlroots_incs +
             ' -c "$p" -o "${p%.c}.o" || { echo "wlroots: FAIL $p"; exit 1; }; done; '
             'llvm-ar rcs "$WB/lib/libwlroots.a" "$WB"/obj/*.o; '
+            'rm -rf "$WB/include/wlr.new"; '
+            'cp -r include/wlr "$WB/include/wlr.new"; '
             'rm -rf "$WB/include/wlr"; '
-            'cp -r include/wlr "$WB/include/"'
+            'mv "$WB/include/wlr.new" "$WB/include/wlr"; '
+            + wlroots_config
         )
         wlroots_script = (
             "set -e; " + _musl_run + _musl_pick +
@@ -1438,6 +1577,178 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             optional=True, group="musl-lib",
             description="build static wlroots 0.17.4 (pixman+drm+real session stack)"))
 
+        sway_src_pinned = BUILD_DIR / "src" / "sway-1.9"
+        sway_prefix = BUILD_DIR / "sway"
+        sway_cflags = (
+            "-O2 -fPIC -std=gnu17 -D__linux__ -DWLR_USE_UNSTABLE -include limits.h -include stdlib.h -include string.h -include float.h "
+            "-DSWAY_VERSION=\\\"1.9-lumen\\\" -DSYSCONFDIR=\\\"/etc\\\" "
+            "-DHAVE_XWAYLAND=0 -DHAVE_GDK_PIXBUF=0 -DHAVE_LIBSYSTEMD=0 "
+            "-DHAVE_LIBELOGIND=0 -DHAVE_BASU=0 -DHAVE_TRAY=0 "
+            "-DHAVE_LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM=1 "
+            "-Wno-unused-parameter -Wno-unused-result -Wno-missing-braces "
+            "-Wno-format-zero-length -Wno-sign-compare")
+        sway_incs = (
+            f"-I{ROOT / 'buildsys' / 'sway-shim' / 'libinput'} "
+            f"-I{ROOT / 'buildsys' / 'sway-shim' / 'cairo'} "
+            f"-I{ROOT / 'buildsys' / 'sway-shim' / 'pango'} "
+            f"-I{ROOT / 'buildsys' / 'sway-shim' / 'json-c'} "
+            f"-I{ROOT / 'buildsys' / 'sway-shim' / 'libevdev'} "
+            f'-iquote "$SS/include" -I"$SS" -I"$SS/include/sway" '
+            f'-I"$SS/include/sway/tree" '
+            f"-I{wlroots_src_pinned / 'include'} "
+            f"-I{wlroots_prefix / 'include'} "
+            f"-I{wlroots_prefix / 'include' / 'protocol'} "
+            f"-I{ROOT / 'third_party' / 'wayland' / 'src'} "
+            f"-I{ROOT / 'third_party' / 'wayland'} "
+            f"-I{BUILD_DIR / 'wayland-gen'} "
+            f"-I{libdrm_prefix / 'include'} "
+            f"-I{libdrm_prefix / 'include' / 'drm'} "
+            f"-I{_lnx_inc} "
+            f"-I{pixman_prefix / 'include'} "
+            f"-I{xkb_prefix / 'include'} "
+            f"-I{seatd_prefix / 'include'} "
+            f"-I{seatd_prefix / 'include' / 'libseat'} "
+            f"-I{udev_prefix / 'include'} "
+            f"-I{ldi_src / 'include'} "
+            f"-I{PCRE2_INC} "
+            f"-I{MUSL_INC} "
+            '-isystem "$($MC -print-resource-dir)/include"'
+        )
+        sway_source_setup = (
+            f"rm -rf {shlex.quote(str(sway_src_pinned))}; "
+            f"mkdir -p {shlex.quote(str(BUILD_DIR / 'src'))}; "
+            f"cp -a {shlex.quote(str(ROOT / 'third_party' / 'sway'))} "
+            f"{shlex.quote(str(sway_src_pinned))}; "
+            f"python3 {shlex.quote(str(TOOLS / 'patch_sway_min.py'))} "
+            f"{shlex.quote(str(sway_src_pinned))}"
+        )
+        tasks.append(Task(
+            name="sway-source-min",
+            cmd=[sh, "-c", sway_source_setup],
+            out=sway_src_pinned / "sway" / "server.c",
+            deps=[ROOT / "third_party" / "sway" / "meson.build",
+                  TOOLS / "patch_sway_min.py"],
+            optional=True, group="musl-lib",
+            description="export Sway 1.9 minimal source"))
+        sway_common_srcs = (
+            "gesture ipc-client log loop list stringop util"
+        ).split()
+        sway_sources = (
+            "commands config criteria decoration lock realtime server main swaynag "
+            "xdg_activation_v1 xdg_decoration "
+            "desktop/desktop desktop/idle_inhibit_v1 desktop/layer_shell "
+            "desktop/output desktop/render desktop/surface desktop/transaction "
+            "desktop/xdg_shell desktop/launcher "
+            "input/input-manager input/cursor input/keyboard input/seat "
+            "input/seatop_default input/seatop_down input/seatop_move_floating "
+            "input/seatop_move_tiling input/seatop_resize_floating "
+            "input/seatop_resize_tiling input/switch input/tablet input/text_input "
+            "config/bar config/output config/seat config/input "
+            "tree/arrange tree/container tree/node tree/root tree/view tree/workspace tree/output"
+        ).split()
+        sway_command_dirs = [
+            "commands", "commands/seat", "commands/bar", "commands/input",
+            "commands/output", "commands/bar/bind", "commands/input",
+        ]
+        sway_command_srcs = [
+            p.relative_to(sway_src_pinned / "sway").with_suffix("").as_posix()
+            for pattern in sway_command_dirs
+            for p in sorted((sway_src_pinned / "sway" / pattern).glob("*.c"))
+        ]
+        sway_source_task = Task(
+            name="sway-static-lib",
+            cmd=[sh, "-c",
+                 "set -e; " + _musl_run + _musl_pick +
+                 f"SS={shlex.quote(str(sway_src_pinned))}; "
+                 f"SB={shlex.quote(str(sway_prefix))}; "
+                 f"SV={shlex.quote(str(ROOT / 'buildsys' / 'sway-shim'))}; "
+                 'mkdir -p "$SB/obj" "$SB/lib" "$SB/include"; '
+                 f'cp {shlex.quote(str(ROOT / "buildsys" / "sway-shim" / "sway_min_shim.c"))} '
+                 '"$SB/obj/sway_min_shim.c"; '
+                 f'cd "$SV" && "$MC" {sway_cflags} -c sway_min_shim.c '
+                 '-o "$SB/obj/sway_min_shim.o" '
+                 f'-I{shlex.quote(str(ROOT / "buildsys" / "sway-shim" / "cairo"))} '
+                 f'-I{shlex.quote(str(ROOT / "buildsys" / "sway-shim" / "pango"))} '
+                 f'-I{shlex.quote(str(ROOT / "buildsys" / "sway-shim" / "json-c"))} '
+                 f'-I{shlex.quote(str(ROOT / "buildsys" / "sway-shim" / "libevdev"))} '
+                 f'-I{shlex.quote(str(BUILD_DIR / "wayland-gen"))} '
+                 f'-I{shlex.quote(str(ROOT / "third_party" / "wayland" / "src"))} '
+                 f'-I{shlex.quote(str(_lnx_inc))} '
+                 f"-I{shlex.quote(str(MUSL_INC))} "
+                 '-isystem "$($MC -print-resource-dir)/include"; '
+                 'cd "$SS/sway"; '
+                 f'for f in {" ".join(sway_sources + sway_command_srcs)}; do '
+                 'o="$SB/obj/$(echo "$f" | tr "/" "_").o"; '
+                 f'"$MC" {sway_cflags} {sway_incs} -c "$f.c" -o "$o" '
+                 '|| { echo "sway: FAIL $f"; exit 1; }; done; '
+                 'cd "$SS/common"; '
+                 'for f in ' + " ".join(sway_common_srcs) + '; do '
+                 'o="$SB/obj/common_$f.o"; '
+                 f'"$MC" {sway_cflags} {sway_incs} -c "$f.c" -o "$o" '
+                 '|| { echo "sway-common: FAIL $f"; exit 1; }; done; '
+                 'llvm-ar rcs "$SB/lib/libsway.a" "$SB"/obj/*.o; '
+                 'cp -r "$SS/include"/* "$SB/include/"'],
+            out=sway_prefix / "lib" / "libsway.a",
+            deps=[sway_src_pinned / "sway" / "server.c",
+                  wlroots_prefix / "lib" / "libwlroots.a",
+                  wl_build / "libwayland-server.a"],
+            optional=True, group="musl-lib",
+            description="build static Sway 1.9 minimal core")
+        tasks.append(sway_source_task)
+
+        sway_deps_dir = BUILD_DIR / "sway" / "deps"
+        sway_dep_task = Task(
+            name="sway-link-deps",
+            cmd=[sh, "-c",
+                 f"mkdir -p {shlex.quote(str(sway_deps_dir))}; "
+                 f"cp {shlex.quote(str(seatd_prefix / 'lib' / 'libseat.a'))} "
+                 f"{shlex.quote(str(sway_deps_dir / 'libseat.a'))}; "
+                 f"cp {shlex.quote(str(udev_prefix / 'lib' / 'libudev.a'))} "
+                 f"{shlex.quote(str(sway_deps_dir / 'libudev.a'))}; "
+                 f"{shlex.quote(tools.objcopy)} "
+                 "--redefine-sym seat_create=lumen_seatd_seat_create "
+                 "--redefine-sym seat_destroy=lumen_seatd_seat_destroy "
+                 "--redefine-sym server_init=lumen_seatd_server_init "
+                 f"{shlex.quote(str(sway_deps_dir / 'libseat.a'))}; "
+                 f"{shlex.quote(tools.objcopy)} "
+                 "--redefine-sym parse_boolean=lumen_udev_parse_boolean "
+                 f"{shlex.quote(str(sway_deps_dir / 'libudev.a'))}"],
+            out=sway_deps_dir / "libudev.a",
+            deps=[seatd_prefix / "lib" / "libseat.a",
+                  udev_prefix / "lib" / "libudev.a"],
+            optional=True, group="musl",
+            description="rename seatd/udev symbols colliding with sway")
+        tasks.append(sway_dep_task)
+        user_elves.append(sway_dep_task)
+
+        sway_elf = Task(
+            name="sway.elf",
+            cmd=[tools.ld, "-nostdlib", "-static", "-pie", "--no-dynamic-linker",
+                 "-z", "pack-relative-relocs", "-e", "_start",
+                 str(MUSL_LIB / "crt1.o"), str(MUSL_LIB / "crti.o"),
+                 str(sway_prefix / "lib" / "libsway.a"),
+                 str(wlroots_prefix / "lib" / "libwlroots.a"),
+                 str(wl_build / "libwayland-server.a"),
+                 str(wl_build / "libwayland-client.a"),
+                 str(xkb_prefix / "lib" / "libxkbcommon.a"),
+                 str(sway_deps_dir / "libseat.a"),
+                 str(sway_deps_dir / "libudev.a"),
+                 str(libdrm_prefix / "lib" / "libdrm.a"),
+                 str(pixman_prefix / "lib" / "libpixman-1.a"),
+                 str(ffi_prefix / "lib" / "libffi.a"),
+                 str(PCRE2_LIB / "libpcre2-8.a"),
+                 str(MUSL_LIB / "crtn.o"),
+                 "-L", str(MUSL_LIB), "--start-group", "-lc", "-lm", "--end-group",
+                 "-o", str(BUILD_DIR / "sway.elf")],
+            out=BUILD_DIR / "sway.elf",
+            deps=[sway_prefix / "lib" / "libsway.a",
+                  wlroots_prefix / "lib" / "libwlroots.a",
+                  sway_deps_dir / "libudev.a"],
+            optional=True, group="musl",
+            description="link sway.elf (minimal Sway + wlroots)")
+        tasks.append(sway_elf)
+        user_elves.append(sway_elf)
+
         if (PCRE2_SRC / "configure").exists():
             pcre2_script = (
             "set -e; " + _musl_run +
@@ -1453,13 +1764,15 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
                 "make -j\"$(nproc 2>/dev/null || echo 4)\" >/dev/null; "
                 "make install >/dev/null"
             )
-            tasks.append(Task(
+            pcre2_task = Task(
                 name="pcre2-static-lib",
                 cmd=[sh, "-c", pcre2_script],
                 out=PCRE2_LIB / "libpcre2-8.a",
                 deps=[MUSL_LIB / "libc.a"],
                 optional=True, group="musl-lib",
-                description="build static libpcre2-8 against musl"))
+                description="build static libpcre2-8 against musl")
+            tasks.append(pcre2_task)
+            sway_source_task.deps.append(pcre2_task)
             p2_cflags = MUSL_DEMO_CFLAGS + ["-fno-stack-protector", "-Os",
                                              "-DPCRE2_STATIC",
                                              "-I", str(PCRE2_INC)]
@@ -1590,7 +1903,9 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
     if CONFIG.get("CONFIG_UEFI") == "y" and uefi_enabled:
         test_hd_task.deps.append(uefi_esp)
     test_hd_task.deps.extend(user_elves)
-    for elf_name in ("drmtest.elf", "seatprobe.elf", "wltest.elf"):
+    for elf_name in ("drmtest.elf", "seatprobe.elf", "wltest.elf", "wlprobe.elf",
+                     "swayclient.elf", "epollfork.elf", "swaysuper.elf",
+                     "pthread.elf", "cloexec.elf"):
         elf_path = BUILD_DIR / elf_name
         if elf_path.exists():
             test_hd_task.deps.append(elf_path)

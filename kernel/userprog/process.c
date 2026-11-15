@@ -173,6 +173,10 @@ static uint32_t free_user_pt(uint64_t *pt, uint32_t pdp_idx, uint32_t pd_idx,
             continue;
         }
         uint64_t vaddr = ((uint64_t)pdp_idx << 30) | ((uint64_t)pd_idx << 21) | ((uint64_t)i << 12);
+        if (pt[i] & SHM_FLAG) {
+            pt[i] = 0;
+            continue;
+        }
         uint32_t bit = (uint32_t)((vaddr - USER_EXEC64_FLOOR) / PAGE_SIZE);
         int tracked = owner != NULL && vaddr >= USER_EXEC64_FLOOR && vaddr < USER_STACK_TOP &&
                        bit < owner->userprog_v_addr.vaddr_bitmap.btmp_bytes_len * 8 &&
@@ -232,6 +236,9 @@ static void release_addr_bitmap(struct TASK *owner) {
 }
 
 static void space_release_ex(uint32_t pml4_phys, struct TASK *owner, int release_bitmap) {
+    if (release_bitmap) {
+        shmem_release_space(pml4_phys);
+    }
     if (pml4_phys != 0) {
         uint64_t *pml4 = phys_to_virt(pml4_phys);
         if (pml4[0] & 1) {

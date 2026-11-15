@@ -53,6 +53,7 @@
 struct drm_gem {
     uint8_t used;
     uint32_t handle;
+    uint32_t fb_refs;
     uint32_t w;
     uint32_t h;
     uint32_t pitch;
@@ -107,6 +108,9 @@ static void drm_fill_mode(struct drm_mode_modeinfo *m) {
 }
 
 static struct drm_gem *drm_gem_by_handle(uint32_t handle) {
+    if (handle == 0) {
+        return NULL;
+    }
     for (int i = 0; i < DRM_MAX_GEMS; i++) {
         if (drm_gems[i].used && drm_gems[i].handle == handle) {
             return &drm_gems[i];
@@ -124,6 +128,8 @@ static struct drm_fb *drm_fb_by_id(uint32_t id) {
     return NULL;
 }
 
+static void drm_gem_free(struct drm_gem *gem);
+
 static struct drm_fb *drm_fb_new(struct drm_gem *gem) {
     for (int i = 0; i < DRM_MAX_FBS; i++) {
         struct drm_fb *fb = &drm_fbs[i];
@@ -131,6 +137,7 @@ static struct drm_fb *drm_fb_new(struct drm_gem *gem) {
             fb->used = 1;
             fb->id = 0x1000 + ++drm_fb_seq;
             fb->gem = gem;
+            gem->fb_refs++;
             return fb;
         }
     }
@@ -160,6 +167,7 @@ static void drm_push_event(struct drm_client *c, uint32_t type, uint64_t user_da
 }
 
 static void drm_scanout_gem(struct drm_gem *gem) {
+
     struct GFX_CANVAS src;
     src.pixels = (gfx_color *)(uintptr_t)VIRT_OF(gem->phys);
     src.pitch = (int)gem->pitch;
@@ -509,6 +517,14 @@ static int32_t drm_ioctl_rm_fb(uint32_t *id) {
         drm_crtc_fb = 0;
     }
     fb->used = 0;
+    if (fb->gem != NULL) {
+        if (fb->gem->fb_refs > 0) {
+            fb->gem->fb_refs--;
+        }
+        if (fb->gem->fb_refs == 0 && fb->gem->handle == 0) {
+            drm_gem_free(fb->gem);
+        }
+    }
     return 0;
 }
 
@@ -582,6 +598,8 @@ static void drm_gem_free(struct drm_gem *gem) {
         pfree(&kernel_pool, gem->phys + i * PAGE_SIZE);
     }
     gem->used = 0;
+    gem->handle = 0;
+    gem->fb_refs = 0;
 }
 
 static int32_t drm_ioctl_destroy_dumb(struct drm_mode_destroy_dumb *d) {
@@ -598,6 +616,18 @@ static int32_t drm_ioctl_destroy_dumb(struct drm_mode_destroy_dumb *d) {
         }
     }
     drm_gem_free(gem);
+    return 0;
+}
+
+static int32_t drm_ioctl_gem_close(struct drm_gem_close *g) {
+    struct drm_gem *gem = drm_gem_by_handle(g->handle);
+    if (gem == NULL) {
+        return 0;
+    }
+    gem->handle = 0;
+    if (gem->fb_refs == 0) {
+        drm_gem_free(gem);
+    }
     return 0;
 }
 
@@ -869,8 +899,6 @@ static int32_t drm_atomic_commit(struct FILE *file, struct drm_mode_atomic *a) {
     uint32_t *counts = (uint32_t *)(uintptr_t)a->count_props_ptr;
     uint32_t *props = (uint32_t *)(uintptr_t)a->props_ptr;
     uint64_t *values = (uint64_t *)(uintptr_t)a->prop_values_ptr;
-    uint32_t prop_idx = 0;
-
     uint32_t fb_val = 0;
     uint32_t crtc_val = 0;
     uint64_t src_x = 0;
@@ -1065,6 +1093,9 @@ static int32_t drm_ioctl(struct FILE *file, uint32_t cmd, uint64_t arg) {
     case DRM_IOCTL_MODE_DESTROY_DUMB:
         rc = drm_ioctl_destroy_dumb((struct drm_mode_destroy_dumb *)p);
         break;
+    case DRM_IOCTL_GEM_CLOSE:
+        rc = drm_ioctl_gem_close((struct drm_gem_close *)p);
+        break;
     case DRM_IOCTL_MODE_GETPLANERESOURCES:
         rc = drm_ioctl_get_plane_res((struct drm_mode_get_plane_res *)p);
         break;
@@ -1125,7 +1156,8 @@ int drm_fd_mmap(int32_t fd, uint32_t base, uint32_t pages, uint32_t prot, uint64
             return -1;
         }
         *pte = pte_wx((uint64_t)(gem->phys + i * PAGE_SIZE) | PTE_P | PTE_U,
-                      !!(prot & PROT_WRITE), !!(prot & PROT_EXEC));
+                      !!(prot & PROT_WRITE), !!(prot & PROT_EXEC)) |
+               SHM_FLAG;
         arch_tlb_flush(base + i * PAGE_SIZE);
     }
     return 0;

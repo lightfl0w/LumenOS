@@ -9,8 +9,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MY_TIOCGPTN 0x8004540Fu
-#define MY_TIOCSPTLCK 0x40045411u
+#define MY_TIOCGPTN 0x80045430u
+#define MY_TIOCSPTLCK 0x40045431u
 #define MY_TIOCSCTTY 0x540Eu
 #define MY_TIOCGPGRP 0x540fu
 

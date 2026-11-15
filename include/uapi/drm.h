@@ -12,6 +12,7 @@
 #define DRM_IOCTL_SET_CLIENT_CAP 0x4010640du
 #define DRM_IOCTL_AUTH_MAGIC 0x40046411u
 #define DRM_IOCTL_GET_CLIENT 0xc01c6414u
+#define DRM_IOCTL_GEM_CLOSE 0x40086409u
 #define DRM_IOCTL_SET_MASTER 0x641eu
 #define DRM_IOCTL_DROP_MASTER 0x641fu
 
@@ -53,6 +54,11 @@ struct drm_prime_handle {
     uint32_t handle;
     uint32_t flags;
     int32_t fd;
+};
+
+struct drm_gem_close {
+    uint32_t handle;
+    uint32_t pad;
 };
 #define DRM_IOCTL_MODE_CREATEPROPBLOB 0xc01064bdu
 #define DRM_IOCTL_MODE_DESTROYPROPBLOB 0xc00464beu

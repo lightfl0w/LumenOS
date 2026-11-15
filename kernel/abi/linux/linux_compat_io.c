@@ -95,9 +95,13 @@ int64_t lc_socket(LC_ARGS) {
         return nl_sock_create((int64_t)c);
     }
     if (domain == 1) {
+        int nonblock = (type & LINUX_SOCK_NONBLOCK) != 0;
+        type &= ~(LINUX_SOCK_NONBLOCK | LINUX_SOCK_CLOEXEC);
         int i = unix_socket_create(type);
         if (i < 0)
             return -LINUX_ENFILE;
+        if (nonblock)
+            unix_set_nonblock(i, 1);
         uint64_t fd = UNIX_FD_BASE + (uint64_t)i;
         unix_fd_acquire((int32_t)current->pid, fd);
         return fd;
@@ -254,16 +258,26 @@ int64_t lc_accept(LC_ARGS) {
         int n = unix_accept(uslot);
         if (n < 0)
             return -LINUX_EAGAIN;
-        return UNIX_FD_BASE + n;
+        uint64_t nfd = UNIX_FD_BASE + (uint64_t)n;
+        unix_fd_acquire((int32_t)current->pid, nfd);
+        return (int64_t)nfd;
     }
     return net_accept((int)a);
 }
 int64_t lc_accept4(LC_ARGS) {
+    uint64_t flags = d;
     int64_t nfd = lc_accept(r, a, b, c, d, e, f);
     if (nfd < 0)
         return nfd;
-    if (c & LINUX_SOCK_CLOEXEC)
+    if (flags & LINUX_SOCK_CLOEXEC)
         sys_fcntl((int32_t)nfd, F_SETFD, FD_CLOEXEC);
+    if (flags & LINUX_SOCK_NONBLOCK) {
+        int uslot = unix_fd_slot((uint64_t)nfd);
+        if (uslot >= 0)
+            unix_set_nonblock(uslot, 1);
+        else
+            sys_fcntl((int32_t)nfd, F_SETFL, O_NONBLOCK);
+    }
     return nfd;
 }
 int64_t lc_shutdown(LC_ARGS) {
@@ -273,10 +287,12 @@ int64_t lc_shutdown(LC_ARGS) {
 }
 int64_t lc_sendto(LC_ARGS) {
     int uslot = unix_fd_slot(a);
+    int nonblock = ((int)d & LINUX_MSG_DONTWAIT) != 0;
     if (uslot >= 0) {
         if (!user_ptr_ok(r, b, (uint32_t)c, 0))
             return -LINUX_EFAULT;
-        return unix_send(uslot, (const void *)(uintptr_t)b, (uint32_t)c);
+        return unix_send_data_flags(uslot, (const void *)(uintptr_t)b, (uint32_t)c, NULL, 0,
+                                    nonblock);
     }
     if (!user_ptr_ok(r, b, (uint32_t)c, 0))
         return -LINUX_EFAULT;
@@ -294,7 +310,8 @@ int64_t lc_recvfrom(LC_ARGS) {
     if (uslot >= 0) {
         if (!user_ptr_ok(r, b, (uint32_t)c, 1))
             return -LINUX_EFAULT;
-        return unix_recv(uslot, (void *)(uintptr_t)b, (uint32_t)c);
+        return unix_recv_flags(uslot, (void *)(uintptr_t)b, (uint32_t)c,
+                               ((int)d & LINUX_MSG_DONTWAIT) != 0);
     }
     if (!user_ptr_ok(r, b, (uint32_t)c, 1))
         return -LINUX_EFAULT;
@@ -427,7 +444,8 @@ int64_t lc_sendmsg(LC_ARGS) {
         int nfds = mh.ctrl != 0 ? unix_cmsg_fds(r, mh.ctrl, mh.ctrllen, gfds, 28) : 0;
         if (nfds < 0)
             return nfds;
-        int32_t rc = unix_send_data(uslot, sbuf, total, nfds > 0 ? gfds : NULL, nfds);
+        int32_t rc = unix_send_data_flags(uslot, sbuf, total, nfds > 0 ? gfds : NULL, nfds,
+                                          ((int32_t)c & LINUX_MSG_DONTWAIT) != 0);
         if (rc < 0) {
             for (int i = 0; i < nfds; i++) {
                 if (file_table_unref((uint32_t)gfds[i]) == 0)
@@ -496,32 +514,51 @@ static void unix_fill_scm(struct LINUX_MSGHDR *mh, const int *gfds, int nfds) {
     mh->ctrllen = clen;
 }
 
-static int64_t unix_recvmsg(struct ARCH_REGS *r, uint64_t ub, int uslot) {
+static int64_t unix_recvmsg(struct ARCH_REGS *r, uint64_t ub, int uslot, int nonblock) {
     if (!user_ptr_ok(r, ub, sizeof(struct LINUX_MSGHDR), 1))
         return -LINUX_EFAULT;
     struct LINUX_MSGHDR mh;
     memcpy(&mh, (const void *)(uintptr_t)ub, sizeof mh);
+
+    struct LINUX_IOVEC iovs[8];
+    uint32_t niov = 0;
+    uint32_t iov_total = 0;
+    if (mh.iov != 0) {
+        niov = mh.iovlen > 8 ? 8 : (uint32_t)mh.iovlen;
+        for (uint32_t i = 0; i < niov; i++) {
+            uint64_t ent = mh.iov + (uint64_t)i * sizeof(struct LINUX_IOVEC);
+            if (!user_ptr_ok(r, ent, sizeof(struct LINUX_IOVEC), 0))
+                return -LINUX_EFAULT;
+            memcpy(&iovs[i], (const void *)(uintptr_t)ent, sizeof iovs[i]);
+            uint64_t room = iovs[i].iov_len;
+            if (room > (uint64_t)UNIX_MAX_IOV - iov_total)
+                room = (uint64_t)UNIX_MAX_IOV - iov_total;
+            iov_total += (uint32_t)room;
+        }
+    }
+    if (iov_total == 0)
+        return 0;
+
     uint8_t rbuf[UNIX_MAX_IOV];
     int gfds[28];
     int nfds = 0;
-    int32_t n = unix_recv_data(uslot, rbuf, sizeof(rbuf), gfds, &nfds);
+    int32_t n = unix_recv_data_flags(uslot, rbuf, iov_total, gfds, &nfds, nonblock);
     if (n < 0)
         return n;
+
     uint32_t copied = 0;
-    if (mh.iov != 0 && mh.iovlen > 0) {
-        uint64_t ent = mh.iov;
-        if (!user_ptr_ok(r, ent, sizeof(struct LINUX_IOVEC), 1))
+    for (uint32_t i = 0; i < niov && copied < (uint32_t)n; i++) {
+        uint32_t n2 = (uint32_t)iovs[i].iov_len;
+        if (n2 > (uint32_t)n - copied)
+            n2 = (uint32_t)n - copied;
+        if (n2 == 0)
+            continue;
+        if (!user_ptr_ok(r, (uint64_t)iovs[i].iov_base, n2, 1))
             return -LINUX_EFAULT;
-        struct LINUX_IOVEC iv;
-        memcpy(&iv, (const void *)(uintptr_t)ent, sizeof iv);
-        uint32_t n2 = iv.iov_len > (uint64_t)(uint32_t)n ? (uint32_t)n : (uint32_t)iv.iov_len;
-        if (n2 != 0) {
-            if (!user_ptr_ok(r, (uint64_t)iv.iov_base, n2, 1))
-                return -LINUX_EFAULT;
-            memcpy((void *)(uintptr_t)iv.iov_base, rbuf, n2);
-        }
-        copied = n2;
+        memcpy((void *)(uintptr_t)iovs[i].iov_base, rbuf + copied, n2);
+        copied += n2;
     }
+
     unix_fill_scm(&mh, gfds, nfds);
     mh.flags = 0;
     memcpy((void *)(uintptr_t)ub, &mh, sizeof mh);
@@ -531,7 +568,7 @@ static int64_t unix_recvmsg(struct ARCH_REGS *r, uint64_t ub, int uslot) {
 int64_t lc_recvmsg(LC_ARGS) {
     int uslot = unix_fd_slot(a);
     if (uslot >= 0) {
-        return unix_recvmsg(r, b, uslot);
+        return unix_recvmsg(r, b, uslot, ((int32_t)c & LINUX_MSG_DONTWAIT) != 0);
     }
     if (!user_ptr_ok(r, b, sizeof(struct LINUX_MSGHDR), 1))
         return -LINUX_EFAULT;
@@ -595,7 +632,7 @@ int64_t lc_socketpair(LC_ARGS) {
 #define EVFD_BASE 0x800
 #define EVFD_MAX 16
 #define TFD_BASE 0x880
-#define TFD_MAX 8
+#define TFD_MAX 32
 #define EPFD_BASE 0xB00
 #define EPFD_MAX 8
 #define EP_MAX_ITEMS 32
