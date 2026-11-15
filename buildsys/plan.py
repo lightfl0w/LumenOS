@@ -717,6 +717,15 @@ def make_plan(tools: Tools, with_musl_lib: bool = False,
             tasks.append(link_musl_user(
                 "musl_py_compat_probe.elf", BUILD_DIR / "py_compat_probe.elf",
                 [BUILD_DIR / "py_compat_probe.o"]))
+            wrbench_c = task_cc(
+                "musl_wrbench.o", TESTS / "probes" / "wrbench.c",
+                BUILD_DIR / "wrbench.o", tools, MUSL_DEMO_CFLAGS)
+            wrbench_c.optional = True
+            wrbench_c.group = "musl"
+            tasks.append(wrbench_c)
+            tasks.append(link_musl_user(
+                "musl_wrbench.elf", BUILD_DIR / "wrbench.elf",
+                [BUILD_DIR / "wrbench.o"]))
             ux_test_c = task_cc(
                 "test_unixsock.o", TESTS / "probes" / "unixsock_test.c",
                 BUILD_DIR / "unixsock_test.o", tools, MUSL_DEMO_CFLAGS)

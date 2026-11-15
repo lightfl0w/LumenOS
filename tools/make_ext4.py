@@ -41,6 +41,7 @@ FILES = [
     "lc_demo.elf", "libc_testsuite.elf", "musl_demo.elf", "udp_echo.elf",
     "musl_abi_test.elf", "dev_demo.elf", "gui.elf", "busybox", "dyn_demo.elf", "dyn_hello.elf",
     "py_compat_probe.elf", "sh.elf", "cpp_hello.elf", "termios_probe.elf",
+    "wrbench.elf",
     "pty_demo.elf", "jc_demo.elf", "pcre2_demo.elf", "at_probe.elf",
     "futex_bs_probe.elf", "compat_stub_probe.elf",
     "rust_hello.elf", "rust_probe.elf", "rust_probe2.elf", "fish.elf",

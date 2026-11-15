@@ -121,6 +121,7 @@ static int fs_create_common(const char *pathname, uint32_t mode, int is_dir) {
     }
     uint32_t pino = get_parent_inode(parent);
     if (pino == 0) {
+        kprintf("create: parent lookup failed for %s\n", pathname);
         current->errno = 2;
         return -1;
     }
@@ -419,6 +420,8 @@ int open_file_mode(const char *pathname, uint8_t flags, uint32_t mode) {
     if (fs_lookup(pathname, &ino, &is_dir)) {
         if ((flags & O_CREAT) != 0) {
             if (create_file_mode(pathname, mode & ~current->umask) <= 0) {
+                kprintf("fs_open: create %s failed, create errno=%d\n", pathname,
+                        current->errno);
                 current->errno = 2;
                 return -1;
             }

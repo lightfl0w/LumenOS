@@ -9,7 +9,9 @@
 #include "fs/dir.h"
 #include "fs/chardev.h"
 #include "fs/devfs.h"
+#include "fs/ext4.h"
 #include "fs/file.h"
+#include "fs/pbcache.h"
 #include "fs/fs.h"
 #include "fs/proc.h"
 #include "kernel/ipc/shmem.h"
@@ -1374,6 +1376,8 @@ int64_t lc_fsync(LC_ARGS) {
         return -LINUX_EBADF;
     if (is_pipe((int)a))
         return -LINUX_EINVAL;
+    ext4_journal_flush();
+    pbc_flush_all();
     return 0;
 }
 int64_t lc_truncate(LC_ARGS) {

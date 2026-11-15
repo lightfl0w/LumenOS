@@ -12,6 +12,7 @@
 #include "fs/file.h"
 #include "fs/fs.h"
 #include "fs/pbcache.h"
+#include "fs/ext4.h"
 #include "kernel/abi/linux/linux_compat.h"
 #include "kernel/abi/win32/win32.h"
 #include "arch/asm_func.h"
@@ -107,6 +108,8 @@ static void sys_exit_group(int32_t status) {
 
 static uint32_t sys_shutdown(void) {
     kprintf("[shutdown] flushing block cache...\n");
+    ext4_journal_flush();
+    ext4_sb_lazy_sync();
     pbc_flush_all();
     kprintf("[shutdown] shutting down system...\n");
     arch_poweroff();

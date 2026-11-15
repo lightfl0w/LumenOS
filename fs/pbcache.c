@@ -4,6 +4,10 @@
 #include "arch/time/pit.h"
 
 static void pbc_flush_thread(void *arg);
+static uint8_t *pbc_bounce_get(uint32_t blocks);
+static int pbc_load_slot(uint32_t dev, uint32_t blk, const uint8_t *src);
+static inline uint32_t pbc_bucket(uint32_t dev, uint32_t blk);
+void pbc_flush_hook(void) __attribute__((weak));
 #include "drivers/char/serial/console/io.h"
 #include "arch/asm_func.h"
 #include "kernel/sync/sync.h"
@@ -11,7 +15,8 @@ static void pbc_flush_thread(void *arg);
 #include "mm/pool.h"
 #include "ops/block_ops.h"
 
-#define PBC_DEV_SLOTS_MAX 512u
+#define PBC_DEV_SLOTS_MAX 4096u
+#define PBC_HASH_BUCKETS 1024u
 
 static struct PBC_SLOT s_slots[PBC_DEV_SLOTS_MAX];
 static uint32_t s_nr_slots;
@@ -20,6 +25,10 @@ static struct PBC_DEV s_devs[PBC_DEV_MAX];
 static uint32_t s_nr_devs;
 static uint32_t s_seq;
 static struct SCHED_SPINLOCK pbc_lock;
+static struct PBC_SLOT *s_hash[PBC_HASH_BUCKETS];
+static struct PBC_SLOT *s_lru_head;
+static struct PBC_SLOT *s_lru_tail;
+static uint32_t s_free_cursor;
 
 static struct PBC_DEV *dev_of(uint32_t id) {
     for (uint32_t i = 0; i < s_nr_devs; i++) {
@@ -100,15 +109,143 @@ int pbc_dev_register(uint32_t dev_id, struct DISK *d, uint32_t start_lba, uint32
     dv->start = start_lba;
     dv->spb = sect_per_block;
     dv->bs = block_size;
+    dv->last_blk = 0;
+    dv->have_last = 0;
     return 0;
 }
 
+static int pbc_present(uint32_t dev, uint32_t blk) {
+    struct PBC_SLOT *s = s_hash[pbc_bucket(dev, blk)];
+    while (s != NULL) {
+        if (s->dev == dev && s->blk == blk && s->valid) {
+            return 1;
+        }
+        s = s->hnext;
+    }
+    return 0;
+}
+
+static int pbc_busy_present(uint32_t dev, uint32_t blk) {
+    struct PBC_SLOT *s = s_hash[pbc_bucket(dev, blk)];
+    while (s != NULL) {
+        if (s->dev == dev && s->blk == blk && s->valid && s->busy) {
+            return 1;
+        }
+        s = s->hnext;
+    }
+    return 0;
+}
+
+static void pbc_wait_free(uint32_t dev, uint32_t blk) {
+    for (;;) {
+        uint32_t f = pbc_lk();
+        struct PBC_SLOT *s = s_hash[pbc_bucket(dev, blk)];
+        int busy = 0;
+        while (s != NULL) {
+            if (s->dev == dev && s->blk == blk && s->valid && s->busy) {
+                busy = 1;
+                break;
+            }
+            s = s->hnext;
+        }
+        pbc_unlk(f);
+        if (!busy) {
+            return;
+        }
+        mtime_sleep(1);
+    }
+}
+
+#define PBC_RA_MAX 8u
+
+static void pbc_readahead(struct PBC_DEV *d, uint32_t dev, uint32_t blk) {
+    uint32_t f = pbc_lk();
+    uint32_t run = 0;
+    while (run < PBC_RA_MAX && pbc_present(dev, blk + run) == 0) {
+        run++;
+    }
+    pbc_unlk(f);
+    if (run < 2) {
+        return;
+    }
+    uint8_t *bounce = pbc_bounce_get(run);
+    if (bounce == NULL) {
+        return;
+    }
+    BLOCK.read_sectors(d->disk, d->start + blk * d->spb, bounce, run * d->spb);
+    for (uint32_t k = 0; k < run; k++) {
+        pbc_load_slot(dev, blk + k, bounce + k * d->bs);
+    }
+}
+
+static inline uint32_t pbc_bucket(uint32_t dev, uint32_t blk) {
+    uint32_t h = blk * 2654435761u + dev * 0x9E3779B9u;
+    return (h ^ (h >> 16)) & (PBC_HASH_BUCKETS - 1);
+}
+
+static void pbc_hash_insert(struct PBC_SLOT *s) {
+    uint32_t b = pbc_bucket(s->dev, s->blk);
+    s->hnext = s_hash[b];
+    s_hash[b] = s;
+}
+
+static void pbc_hash_remove(struct PBC_SLOT *s) {
+    uint32_t b = pbc_bucket(s->dev, s->blk);
+    struct PBC_SLOT **pp = &s_hash[b];
+    while (*pp != NULL && *pp != s) {
+        pp = &(*pp)->hnext;
+    }
+    if (*pp == s) {
+        *pp = s->hnext;
+    }
+    s->hnext = NULL;
+}
+
+static void pbc_lru_push(struct PBC_SLOT *s) {
+    s->lprev = NULL;
+    s->lnext = s_lru_head;
+    if (s_lru_head != NULL) {
+        s_lru_head->lprev = s;
+    }
+    s_lru_head = s;
+    if (s_lru_tail == NULL) {
+        s_lru_tail = s;
+    }
+}
+
+static void pbc_lru_remove(struct PBC_SLOT *s) {
+    if (s->lprev != NULL) {
+        s->lprev->lnext = s->lnext;
+    } else {
+        s_lru_head = s->lnext;
+    }
+    if (s->lnext != NULL) {
+        s->lnext->lprev = s->lprev;
+    } else {
+        s_lru_tail = s->lprev;
+    }
+    s->lprev = s->lnext = NULL;
+}
+
+static void pbc_touch(struct PBC_SLOT *s) {
+    pbc_lru_remove(s);
+    pbc_lru_push(s);
+    s->last_used = ++s_seq;
+}
+
+static void pbc_publish(struct PBC_SLOT *s) {
+    pbc_hash_insert(s);
+    pbc_lru_push(s);
+    s->last_used = ++s_seq;
+}
+
 static struct PBC_SLOT *pbc_find(uint32_t dev, uint32_t blk) {
-    for (uint32_t i = 0; i < s_nr_slots; i++) {
-        struct PBC_SLOT *s = &s_slots[i];
-        if (s->valid && s->busy == 0 && s->dev == dev && s->blk == blk) {
+    struct PBC_SLOT *s = s_hash[pbc_bucket(dev, blk)];
+    while (s != NULL) {
+        if (s->dev == dev && s->blk == blk && s->valid && s->busy == 0) {
             return s;
         }
+        s = s->hnext;
     }
     return NULL;
 }
@@ -116,32 +253,28 @@ static struct PBC_SLOT *pbc_find(uint32_t dev, uint32_t blk) {
 static struct PBC_SLOT *pbc_alloc(uint32_t dev, uint32_t blk, uint32_t *wb_dev, uint32_t *wb_blk,
                                   uint8_t *wb_dirty) {
     struct PBC_SLOT *victim = NULL;
-    for (uint32_t i = 0; i < s_nr_slots; i++) {
+        for (uint32_t n = 0; n < s_nr_slots; n++) {
+        uint32_t i = (s_free_cursor + n) % s_nr_slots;
         if (s_slots[i].valid == 0 && s_slots[i].busy == 0) {
             victim = &s_slots[i];
+            s_free_cursor = (i + 1) % s_nr_slots;
             break;
         }
     }
     if (victim == NULL) {
-        uint32_t best = 0;
-        int have = 0;
-        for (uint32_t i = 0; i < s_nr_slots; i++) {
-            struct PBC_SLOT *s = &s_slots[i];
-            if (s->busy) {
-                continue;
-            }
-            if (have == 0 || s->last_used < s_slots[best].last_used) {
-                best = i;
-                have = 1;
-            }
+        struct PBC_SLOT *s = s_lru_tail;
+        while (s != NULL && s->busy) {
+            s = s->lprev;
         }
-        if (have == 0) {
+        if (s == NULL) {
             return NULL;
         }
-        victim = &s_slots[best];
+        victim = s;
         *wb_dev = victim->dev;
         *wb_blk = victim->blk;
         *wb_dirty = victim->dirty;
+        pbc_hash_remove(victim);
+        pbc_lru_remove(victim);
     }
     victim->busy = 1;
     victim->dev = dev;
@@ -155,17 +288,39 @@ int pbc_read(uint32_t dev, uint32_t blk, void *buf) {
         struct PBC_DEV *d = dev_of(dev);
         return pbc_fill_from_disk(d, blk, (uint8_t *)buf);
     }
-    uint32_t f = pbc_lk();
-    struct PBC_SLOT *s = pbc_find(dev, blk);
+    struct PBC_DEV *rd = dev_of(dev);
+    uint8_t sequential = (rd != NULL && rd->have_last && blk == rd->last_blk + 1);
+    if (rd != NULL) {
+        rd->last_blk = blk;
+        rd->have_last = 1;
+    }
+    uint32_t f;
+    struct PBC_SLOT *s;
+    for (;;) {
+        f = pbc_lk();
+        s = pbc_find(dev, blk);
+        if (s != NULL) {
+            break;
+        }
+        if (pbc_busy_present(dev, blk)) {
+            pbc_unlk(f);
+            mtime_sleep(1);
+            continue;
+        }
+        break;
+    }
     if (s != NULL) {
         s->busy = 1;
-        s->last_used = ++s_seq;
+        pbc_touch(s);
         uint32_t bs = dev_of(dev)->bs;
         pbc_unlk(f);
         memcpy(buf, s->data, bs);
         f = pbc_lk();
         s->busy = 0;
         pbc_unlk(f);
+        if (sequential) {
+            pbc_readahead(rd, dev, blk + 1);
+        }
         return 0;
     }
     uint32_t wb_dev = 0;
@@ -196,9 +351,12 @@ int pbc_read(uint32_t dev, uint32_t blk, void *buf) {
     f = pbc_lk();
     s->valid = 1;
     s->dirty = 0;
-    s->last_used = ++s_seq;
+    pbc_publish(s);
     s->busy = 0;
     pbc_unlk(f);
+    if (sequential) {
+        pbc_readahead(rd, dev, blk + 1);
+    }
     return 0;
 }
 
@@ -221,10 +379,19 @@ static uint8_t *pbc_bounce_get(uint32_t blocks) {
 }
 
 static int pbc_load_slot(uint32_t dev, uint32_t blk, const uint8_t *src) {
-    uint32_t f = pbc_lk();
-    if (pbc_find(dev, blk) != NULL) {
-        pbc_unlk(f);
-        return 1;
+    uint32_t f;
+    for (;;) {
+        f = pbc_lk();
+        if (pbc_find(dev, blk) != NULL) {
+            pbc_unlk(f);
+            return 1;
+        }
+        if (pbc_busy_present(dev, blk)) {
+            pbc_unlk(f);
+            mtime_sleep(1);
+            continue;
+        }
+        break;
     }
     uint32_t wb_dev = 0;
     uint32_t wb_blk = 0;
@@ -244,7 +411,7 @@ static int pbc_load_slot(uint32_t dev, uint32_t blk, const uint8_t *src) {
     f = pbc_lk();
     s->valid = 1;
     s->dirty = 0;
-    s->last_used = ++s_seq;
+    pbc_publish(s);
     s->busy = 0;
     pbc_unlk(f);
     return 0;
@@ -270,7 +437,7 @@ int pbc_read_run(uint32_t dev, uint32_t blk, uint32_t cnt, void *buf) {
         struct PBC_SLOT *s = pbc_find(dev, blk + i);
         if (s != NULL) {
             s->busy = 1;
-            s->last_used = ++s_seq;
+            pbc_touch(s);
             pbc_unlk(f);
             memcpy(dst, s->data, bs);
             f = pbc_lk();
@@ -321,8 +488,18 @@ int pbc_write(uint32_t dev, uint32_t blk, const void *buf) {
         return 0;
     }
     uint32_t bs = dev_of(dev)->bs;
-    uint32_t f = pbc_lk();
-    struct PBC_SLOT *s = pbc_find(dev, blk);
+    struct PBC_SLOT *s;
+    uint32_t f;
+    for (;;) {
+        f = pbc_lk();
+        s = pbc_find(dev, blk);
+        if (s == NULL && pbc_busy_present(dev, blk)) {
+            pbc_unlk(f);
+            mtime_sleep(1);
+            continue;
+        }
+        break;
+    }
     if (s == NULL) {
         uint32_t wb_dev = 0;
         uint32_t wb_blk = 0;
@@ -341,13 +518,13 @@ int pbc_write(uint32_t dev, uint32_t blk, const void *buf) {
         f = pbc_lk();
         s->valid = 1;
         s->dirty = 1;
-        s->last_used = ++s_seq;
+        pbc_publish(s);
         s->busy = 0;
         pbc_unlk(f);
         return 0;
     }
     s->busy = 1;
-    s->last_used = ++s_seq;
+    pbc_touch(s);
     pbc_unlk(f);
     memcpy(s->data, buf, bs);
     f = pbc_lk();
@@ -415,6 +592,7 @@ static void pbc_flush_thread(void *arg) {
     for (;;) {
         mtime_sleep(1000);
         pbc_flush_all();
+        pbc_flush_hook();
     }
 }
 

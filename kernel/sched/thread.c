@@ -6,6 +6,7 @@
 #include "drivers/char/serial/console/io.h"
 #include "drivers/input/keyboard/keyboard.h"
 #include "fs/pbcache.h"
+#include "fs/ext4.h"
 #include "arch/asm_func.h"
 #include "lib/assert.h"
 #include "kernel/sync/sync.h"

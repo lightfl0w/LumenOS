@@ -35,19 +35,45 @@ static inline int ext_read_link_target_with(ext_read_inode_fn read_inode,
 typedef int (*ext_dir_next_fn)(const struct FS_INODE *dino, uint32_t *pos,
                                struct FS_DIRENT *out);
 
-static inline int ext_find_in_dir_with(ext_dir_next_fn dir_next,
-                                       const struct FS_INODE *dino, const char *name,
-                                       uint32_t *child, int *ftype) {
+typedef int (*ext_dentry_lookup_fn)(uint32_t dino, const char *name, uint32_t *child,
+                                    int *ftype);
+typedef void (*ext_dentry_fill_fn)(uint32_t dino, const char *name, uint32_t child, int ftype);
+
+static inline int ext_find_in_dir_cached(ext_dir_next_fn dir_next,
+                                         ext_dentry_lookup_fn dcache_lookup,
+                                         ext_dentry_fill_fn dcache_fill,
+                                         const struct FS_INODE *dino, const char *name,
+                                         uint32_t *child, int *ftype) {
+    if (dcache_lookup != NULL) {
+        int hit = dcache_lookup(dino->i_no, name, child, ftype);
+        if (hit == 1) {
+            return 0;
+        }
+        if (hit == -1) {
+            return -1;
+        }
+    }
     uint32_t pos = 0;
     struct FS_DIRENT de;
+    int found = -1;
     while (dir_next(dino, &pos, &de) == 0) {
         if (strcmp(de.filename, name) == 0) {
             *child = de.i_no;
             *ftype = (int)de.f_type;
-            return 0;
+            found = 0;
+            break;
         }
     }
-    return -1;
+    if (dcache_fill != NULL) {
+        dcache_fill(dino->i_no, name, found == 0 ? *child : 0, found == 0 ? *ftype : 0);
+    }
+    return found;
+}
+
+static inline int ext_find_in_dir_with(ext_dir_next_fn dir_next,
+                                       const struct FS_INODE *dino, const char *name,
+                                       uint32_t *child, int *ftype) {
+    return ext_find_in_dir_cached(dir_next, NULL, NULL, dino, name, child, ftype);
 }
 
 typedef int (*ext_read_link_target_fn)(uint32_t ino, char *buf, uint32_t cap);
@@ -56,6 +82,8 @@ struct EXT_PATH_OPS {
     ext_read_inode_fn read_inode;
     ext_dir_next_fn dir_next;
     ext_read_link_target_fn read_link_target;
+    ext_dentry_lookup_fn dentry_lookup;
+    ext_dentry_fill_fn dentry_fill;
     int mounted;
 };
 
@@ -102,7 +130,8 @@ static inline int ext_lookup_depth_with(const struct EXT_PATH_OPS *ops, const ch
             }
             uint32_t child = 0;
             int ft = 0;
-            if (ext_find_in_dir_with(ops->dir_next, &node, comp, &child, &ft)) {
+            if (ext_find_in_dir_cached(ops->dir_next, ops->dentry_lookup, ops->dentry_fill,
+                                       &node, comp, &child, &ft)) {
                 return -1;
             }
             if (ft == FT_SYMLINK) {

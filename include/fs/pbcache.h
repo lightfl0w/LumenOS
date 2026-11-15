@@ -13,6 +13,9 @@ struct PBC_SLOT {
     uint8_t valid;
     uint8_t dirty;
     uint8_t busy;
+    struct PBC_SLOT *hnext;
+    struct PBC_SLOT *lprev;
+    struct PBC_SLOT *lnext;
 };
 
 struct PBC_DEV {
@@ -21,6 +24,8 @@ struct PBC_DEV {
     uint32_t start;
     uint32_t spb;
     uint32_t bs;
+    uint32_t last_blk;
+    uint8_t have_last;
 };
 
 #define PBC_SLOT_SIZE 4096u

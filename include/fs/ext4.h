@@ -104,6 +104,8 @@ struct EXT4_EXTENT_IDX {
 } __attribute__((packed));
 
 int ext4_init(void);
+int ext4_sb_lazy_sync(void);
+void ext4_journal_flush(void);
 struct DISK_PARTITION *ext4_partition(void);
 int ext4_lookup(const char *path, uint32_t *ino, int *is_dir);
 int ext4_lookup_ftype(const char *path, uint32_t *ino, int *ftype, int follow);
