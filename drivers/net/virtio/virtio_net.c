@@ -128,7 +128,6 @@ static void vq_init(struct VR_QUEUE *q, uint16_t qsel) {
 
 static void vq_push(struct VR_QUEUE *q, uint16_t head) {
     q->avail_ring[*q->avail_idx % q->size] = head;
-    vr_mfence();
     (*q->avail_idx)++;
     vr_mfence();
 }
@@ -164,8 +163,8 @@ static int vr_setup_rx(void) {
         s_rx_data[i] = pool + i * VR_BUF_LEN;
         vr_desc_pair(s_rxq.desc, i, s_rx_data[i]);
         vq_push(&s_rxq, (uint16_t)(2 * i));
-        vq_notify(VRQ_RX);
     }
+    vq_notify(VRQ_RX);
     return 0;
 }
 
@@ -182,7 +181,6 @@ int virtio_net_tx(NETIF *ifp, const void *frame, uint32_t len) {
         }
     }
     uint16_t pair = s_tx_free[--s_tx_free_top];
-    kprintf("[DBG] tx pair=%u len=%u free=%u\n", pair, len, s_tx_free_top);
     memcpy(s_tx_data[pair] + VR_HDR_LEN, frame, len);
     s_txq.desc[2 * pair].addr = PHY_OF((uint32_t)s_tx_data[pair]);
     s_txq.desc[2 * pair].len = VR_HDR_LEN;
@@ -192,8 +190,11 @@ int virtio_net_tx(NETIF *ifp, const void *frame, uint32_t len) {
     s_txq.desc[2 * pair + 1].len = len;
     s_txq.desc[2 * pair + 1].flags = 0;
     s_txq.desc[2 * pair + 1].next = 0xFFFFu;
+    int device_busy = (*s_txq.used_idx != *s_txq.avail_idx);
     vq_push(&s_txq, (uint16_t)(2 * pair));
-    vq_notify(VRQ_TX);
+    if (!device_busy) {
+        vq_notify(VRQ_TX);
+    }
     return (int)len;
 }
 
@@ -211,8 +212,11 @@ int virtio_net_rx(NETIF *ifp, void *buf, uint32_t maxlen) {
     }
     memcpy(buf, s_rx_data[pair] + VR_HDR_LEN, dlen);
     vr_desc_pair(s_rxq.desc, (uint16_t)pair, s_rx_data[pair]);
+    int device_busy = (*s_rxq.used_idx != *s_rxq.avail_idx);
     vq_push(&s_rxq, (uint16_t)(2 * pair));
-    vq_notify(VRQ_RX);
+    if (!device_busy) {
+        vq_notify(VRQ_RX);
+    }
     return (int)dlen;
 }
 
@@ -257,7 +261,5 @@ int virtio_net_init(NETIF *ifp) {
         s_tx_free[i] = i;
     }
     s_tx_free_top = VRQ_TX_PAIRS;
-    ifp->tx = virtio_net_tx;
-    ifp->rx = virtio_net_rx;
     return 0;
 }

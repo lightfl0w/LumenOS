@@ -28,7 +28,7 @@
 #define REG_RDT 0x2818
 #define REG_RA 0x5400
 
-#define TX_DESC_N 16
+#define TX_DESC_N 64
 #define RX_DESC_N 64
 #define RX_BUF_LEN 2048
 #define E1000_TX_WAIT_SPINS 100000u
@@ -63,6 +63,7 @@ static volatile struct E1000_RX_DESC *s_rx;
 static uint8_t *s_tx_buf;
 static uint8_t *s_rx_buf;
 static uint32_t s_tx_cur;
+static uint32_t s_tx_tail;
 static uint32_t s_rx_cur;
 
 static inline uint32_t e1000_reg_read(uint32_t off) {
@@ -139,7 +140,7 @@ int e1000_init(NETIF *ifp) {
     e1000_reg_write(REG_RDT, RX_DESC_N - 1);
     e1000_reg_write(REG_RCTL, 0x2 | 0x8000 | 0x04000000);
 
-    s_tx_cur = s_rx_cur = 0;
+    s_tx_cur = s_tx_tail = s_rx_cur = 0;
     return 0;
 }
 
@@ -152,10 +153,22 @@ static int e1000_tx_wait(volatile uint8_t *status) {
     return 0;
 }
 
+static void e1000_tx_reap(void) {
+    while (s_tx_tail != s_tx_cur && (s_tx[s_tx_tail % TX_DESC_N].status & 0x01)) {
+        s_tx_tail++;
+    }
+}
+
 int e1000_tx(NETIF *ifp, const void *frame, uint32_t len) {
+    e1000_tx_reap();
+    if (s_tx_cur - s_tx_tail >= TX_DESC_N) {
+        if (!e1000_tx_wait(&s_tx[s_tx_tail % TX_DESC_N].status))
+            return -1;
+        e1000_tx_reap();
+        if (s_tx_cur - s_tx_tail >= TX_DESC_N)
+            return -1;
+    }
     uint32_t slot = s_tx_cur % TX_DESC_N;
-    if (!e1000_tx_wait(&s_tx[slot].status))
-        return -1;
     memcpy(s_tx_buf + (size_t)slot * RX_BUF_LEN, frame, len);
     s_tx[slot].length = (uint16_t)len;
     s_tx[slot].cso = 0;
@@ -164,8 +177,6 @@ int e1000_tx(NETIF *ifp, const void *frame, uint32_t len) {
     s_tx[slot].status = 0;
     s_tx_cur++;
     e1000_reg_write(REG_TDT, s_tx_cur % TX_DESC_N);
-    if (!e1000_tx_wait(&s_tx[slot].status))
-        return -1;
     return (int)len;
 }
 

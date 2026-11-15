@@ -104,7 +104,11 @@ static int tcp_emit(NETIF *ifp, struct TCP_PCB *pcb, uint32_t seq, uint32_t ack,
     net_put16(seg + 2, pcb->remote_port);
     net_put32(seg + 4, seq);
     net_put32(seg + 8, ack);
-    uint16_t wnd = (uint16_t)(TCP_RCV_BUF - (uint16_t)(pcb->rx_tail - pcb->rx_head));
+    uint32_t rcv_used = (uint32_t)(uint16_t)(pcb->rx_tail - pcb->rx_head);
+    uint32_t rcv_free = TCP_RCV_BUF - 1 - rcv_used;
+    if (rcv_free > 0xFFFFu)
+        rcv_free = 0xFFFFu;
+    uint16_t wnd = (uint16_t)rcv_free;
     net_put16(seg + 12, (uint16_t)((TCP_HDR_LEN / 4) << 12) | flags);
     net_put16(seg + 14, wnd);
     net_put16(seg + 16, 0);
@@ -121,7 +125,7 @@ static uint16_t tcp_rx_len(struct TCP_PCB *pcb) {
 }
 
 static int tcp_rx_room(struct TCP_PCB *pcb) {
-    return TCP_RCV_BUF - (int)tcp_rx_len(pcb);
+    return TCP_RCV_BUF - 1 - (int)tcp_rx_len(pcb);
 }
 
 static void tcp_rx_put(struct TCP_PCB *pcb, const uint8_t *data, uint32_t len) {
@@ -137,9 +141,9 @@ static void tcp_rx_put(struct TCP_PCB *pcb, const uint8_t *data, uint32_t len) {
 
 static void tcp_fire(NETIF *ifp, struct TCP_PCB *pcb) {
     uint32_t limit = pcb->snd_una + pcb->tx_len;
-    uint32_t window = pcb->snd_wnd ? pcb->snd_wnd : TCP_MSS;
+    uint32_t window = pcb->snd_wnd;
     uint32_t cursor = pcb->snd_nxt;
-    while (seq_lt(cursor, limit) && (int32_t)(cursor - pcb->snd_una) < (int32_t)(window + 1)) {
+    while (seq_lt(cursor, limit) && (int32_t)(cursor - pcb->snd_una) < (int32_t)window) {
         uint32_t avail = limit - cursor;
         uint32_t seg = avail;
         if (seg > TCP_MSS)
@@ -241,8 +245,14 @@ int tcp_recv(struct TCP_PCB *pcb, void *buf, uint32_t len) {
     if (avail > len)
         avail = len;
     uint8_t *dst = (uint8_t *)buf;
-    for (uint32_t i = 0; i < avail; i++)
-        dst[i] = pcb->rx[pcb->rx_head++ & RCV_MASK];
+    uint32_t head = pcb->rx_head & RCV_MASK;
+    uint32_t first = TCP_RCV_BUF - head;
+    if (first > avail)
+        first = avail;
+    memcpy(dst, pcb->rx + head, first);
+    if (avail > first)
+        memcpy(dst + first, pcb->rx, avail - first);
+    pcb->rx_head += avail;
 
     if (room_before < TCP_MSS && tcp_rx_room(pcb) >= TCP_MSS && pcb->active && pcb->remote_port)
         tcp_emit(&g_netif, pcb, pcb->snd_nxt, pcb->rcv_nxt, TCP_FLAG_ACK, 0, 0);
@@ -401,9 +411,9 @@ static void tcp_input_established(NETIF *ifp, struct TCP_PCB *pcb, uint32_t seq,
                     pcb->retry = 0;
                     pcb->tmo = 0;
                 }
-                tcp_fire(ifp, pcb);
             }
         }
+        tcp_fire(ifp, pcb);
     }
     uint32_t seg_dlen = dlen;
     if (dlen && seq_lt(seq, pcb->rcv_nxt)) {
@@ -498,7 +508,7 @@ void tcp_input(NETIF *ifp, uint32_t src, const uint8_t *pkt, uint32_t len) {
         return;
     }
 
-    pcb->snd_wnd = seg_wnd ? seg_wnd : TCP_MSS;
+    pcb->snd_wnd = seg_wnd;
 
     if (pcb->state == TCP_SYN_SENT) {
         if ((flags & TCP_FLAG_SYN) && (flags & TCP_FLAG_ACK)) {

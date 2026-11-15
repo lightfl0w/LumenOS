@@ -23,13 +23,19 @@ static struct IP_PEND s_pend[IP_PEND_MAX];
 uint32_t net_csum_add(uint32_t sum, const void *data, uint32_t len) {
     const uint8_t *p = (const uint8_t *)data;
     uint32_t n = len;
+    while (n >= 4) {
+        sum += ((uint32_t)p[0] << 8) | p[1];
+        sum += ((uint32_t)p[2] << 8) | p[3];
+        p += 4;
+        n -= 4;
+    }
     while (n > 1) {
-        sum += ((uint16_t)p[0] << 8) | p[1];
+        sum += ((uint32_t)p[0] << 8) | p[1];
         p += 2;
         n -= 2;
     }
     if (n)
-        sum += (uint16_t)p[0] << 8;
+        sum += (uint32_t)p[0] << 8;
     return sum;
 }
 
